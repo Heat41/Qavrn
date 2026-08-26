@@ -15,15 +15,19 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    watched_folders: List[str] = []
+    watched_folders: List[str] = [
+        r"C:\Users\ASUS260922\Documents\PT.AEP",
+        r"D:\PAJAK PERUSAHAAN BAPAK"
+    ]
     chunk_size: int = 500
     chunk_overlap: int = 50
     embedding_model: str = "all-MiniLM-L6-v2"
     chroma_persist_dir: str = "./data/chroma"
     ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5:3b"
     supported_extensions: List[str] = [
         # Documents
-        ".pdf", ".docx", ".md", ".txt", ".html", ".csv",
+        ".pdf", ".docx", ".xlsx", ".xls", ".md", ".txt", ".html", ".csv",
         # Data / config
         ".json", ".xml", ".yaml", ".yml", ".toml", ".env",
         # Markup / text

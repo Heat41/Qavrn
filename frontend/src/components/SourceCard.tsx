@@ -21,6 +21,27 @@ export function SourceCard({ source, rank }: Props) {
   const extMatch = source.filename.match(/\.(\w+)$/)
   const ext = extMatch ? extMatch[1].toUpperCase() : 'DOC'
 
+  const openFile = async () => {
+    try {
+      const response = await fetch('/api/open-file', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          file_path: source.file_path,
+        }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        alert(data.detail || 'Gagal membuka file')
+      }
+    } catch {
+      alert('Gagal terhubung ke server')
+    }
+  }
+
   return (
     <div
       className="rounded-lg p-3 text-sm transition-colors"
@@ -58,6 +79,36 @@ export function SourceCard({ source, rank }: Props) {
           </div>
         </div>
       </div>
+
+      <button
+          onClick={async () => {
+            try {
+              const response = await fetch('/api/open-file', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  file_path: source.file_path,
+                }),
+              })
+
+              if (!response.ok) {
+                const error = await response.json()
+                alert(error.detail || 'Gagal membuka file')
+              }
+            } catch (error) {
+              alert('Gagal terhubung ke server')
+            }
+          }}
+          className="mt-2 text-xs px-2 py-1 rounded hover:opacity-80"
+          style={{
+            background: '#1e3a5f',
+            color: '#ffffff',
+          }}
+      >
+        📂 Buka File
+      </button>
 
       {/* Chunk text */}
       <p className="text-xs leading-relaxed" style={{ color: '#D1D5DB' }}>

@@ -28,7 +28,10 @@ export default function App() {
   const [watchedFolders, setWatchedFolders] = useState<string[]>([])
   const [isWatching, setIsWatching] = useState(false)
 
-  const [selectedModel, setSelectedModel] = useState('llama3.2')
+  const [scanningDocument, setScanningDocument] = useState<string | null>(null)
+  const [reindexingDocument, setReindexingDocument] = useState<string | null>(null)
+
+  const [selectedModel, setSelectedModel] = useState('qwen2.5:3b')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // ── Data fetching ───────────────────────────────────────────────────────
@@ -76,7 +79,7 @@ export default function App() {
     setIsLoading(true)
 
     try {
-      const response = await fetch('/api/ask', {
+      const response = await fetch(API +'/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, top_k: 5, model: selectedModel }),
@@ -161,6 +164,70 @@ export default function App() {
     }
   }, [isIndexing, refreshStats])
 
+  // ── Scan single document ───────────────────────────────────────────────
+
+  const handleScanDocument = useCallback(async (filePath: string) => {
+    if (!filePath || scanningDocument) return
+
+    setScanningDocument(filePath)
+
+    try {
+      const result = await fetchJson<{
+        success: boolean
+        file_path: string
+        filename: string
+        indexed: boolean
+        message: string
+        documents: number
+        chunks: number
+      }>('/api/documents/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_path: filePath }),
+      })
+
+      console.log('Hasil scan:', result)
+
+      await refreshStats()
+    } catch (err) {
+      console.error('Scan dokumen gagal:', err)
+    } finally {
+      setScanningDocument(null)
+    }
+  }, [scanningDocument, refreshStats])
+
+  // ── Re-index single document ──────────────────────────────────────────
+
+  const handleReindexDocument = useCallback(async (filePath: string) => {
+    if (!filePath || reindexingDocument) return
+
+    setReindexingDocument(filePath)
+
+    try {
+      const result = await fetchJson<{
+        success: boolean
+        file_path: string
+        filename: string
+        indexed: boolean
+        message: string
+        documents: number
+        chunks: number
+      }>('/api/documents/reindex', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_path: filePath }),
+      })
+
+      console.log('Hasil re-index:', result)
+
+      await refreshStats()
+    } catch (err) {
+      console.error('Re-index dokumen gagal:', err)
+    } finally {
+      setReindexingDocument(null)
+    }
+  }, [reindexingDocument, refreshStats])
+
   // ── Watch folder ─────────────────────────────────────────────────────────
 
   const handleWatchFolder = useCallback(async (folderPath: string) => {
@@ -203,10 +270,16 @@ export default function App() {
         documents={documents}
         isIndexing={isIndexing}
         onIndexFolder={handleIndexFolder}
+
         watchedFolders={watchedFolders}
         isWatching={isWatching}
         onWatchFolder={handleWatchFolder}
         onUnwatchFolder={handleUnwatchFolder}
+
+        scanningDocument={scanningDocument}
+        reindexingDocument={reindexingDocument}
+        onScanDocument={handleScanDocument}
+        onReindexDocument={handleReindexDocument}
       />
 
       {/* Main content */}

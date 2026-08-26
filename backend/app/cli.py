@@ -231,8 +231,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ask.add_argument(
         "--model", "-m",
-        default="llama3.2",
-        help="Ollama model to use (default: llama3.2)",
+        default="qwen2.5:3b",
+        help="Ollama model to use (default: qwen2.5:3b)",
     )
 
     return parser

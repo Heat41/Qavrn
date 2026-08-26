@@ -1,5 +1,6 @@
 export interface Source {
   filename: string
+  file_path: string
   chunk_text: string
   score: number
 }

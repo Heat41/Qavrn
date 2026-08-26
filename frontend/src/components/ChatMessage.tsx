@@ -51,9 +51,16 @@ export function ChatMessageView({ message }: Props) {
             Sources
           </p>
           <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
-            {message.sources.map((src, i) => (
-              <SourceCard key={i} source={src} rank={i + 1} />
-            ))}
+              {message.sources
+                  .slice(
+                      0,
+                      /\.(pdf|docx?|xlsx?|csv|txt|md|html?|json)\b/i.test(message.question)
+                          ? 1
+                          : 5
+                  )
+                  .map((src, i) => (
+                      <SourceCard key={i} source={src} rank={i + 1} />
+                  ))}
           </div>
         </div>
       )}

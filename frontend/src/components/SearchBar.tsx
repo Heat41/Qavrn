@@ -1,6 +1,6 @@
 import { KeyboardEvent, useRef, useState } from 'react'
 
-const MODELS = ['llama3.2', 'llama3.1', 'mistral', 'gemma2', 'phi3']
+const MODELS = ['qwen2.5:3b']
 
 interface Props {
   onSubmit: (question: string) => void
