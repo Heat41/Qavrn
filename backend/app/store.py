@@ -156,7 +156,6 @@ class VectorStore:
 
             year = self._extract_year_from_metadata(
                 metadata,
-                content=chunk.content,
             )
 
             if year:
@@ -580,7 +579,6 @@ class VectorStore:
     @staticmethod
     def _extract_year_from_metadata(
             metadata: Dict[str, Any],
-            content: str = "",
     ) -> str:
         """
         Menentukan tahun dokumen berdasarkan prioritas:
@@ -588,7 +586,11 @@ class VectorStore:
         1. Metadata year yang sudah valid
         2. Nama file
         3. File path
-        4. Isi dokumen
+
+        CATATAN: Isi/content dokumen TIDAK digunakan sebagai sumber tahun.
+        Alasannya: Sebuah dokumen tahun 2021 dapat menyebutkan tahun 2024
+        di dalam isinya, sehingga content tidak bisa dijadikan bukti tahun
+        dokumen tersebut.
 
         Mendukung tahun yang menempel pada karakter lain,
         misalnya:
@@ -649,23 +651,6 @@ class VectorStore:
             matches = re.findall(
                 r"20\d{2}",
                 file_path,
-            )
-
-            if matches:
-                return matches[0]
-
-        # --------------------------------------------------------------
-        # 4. YEAR DARI ISI DOKUMEN
-        # --------------------------------------------------------------
-
-        content = str(
-            content or ""
-        )
-
-        if content:
-            matches = re.findall(
-                r"\b(20\d{2})\b",
-                content,
             )
 
             if matches:

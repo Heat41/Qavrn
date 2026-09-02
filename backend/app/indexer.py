@@ -46,7 +46,7 @@ class Indexer:
         )
 
         self.store = VectorStore(
-            persist_dir=self.settings.chroma_persist_dir
+        persist_dir=self.settings.chroma_persist_path
         )
 
     # ------------------------------------------------------------------
@@ -300,7 +300,7 @@ class Indexer:
             "failed": failed,
         }
 
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
     # YEAR DETECTION
     # ------------------------------------------------------------------
 
@@ -308,15 +308,6 @@ class Indexer:
     def _extract_year(value: str) -> Optional[str]:
         """
         Extract tahun 20xx dari nama file atau path.
-
-        Tahun harus muncul sebagai bagian yang berdiri sendiri
-        atau dipisahkan oleh karakter non-alfanumerik seperti:
-
-            _2024_
-            -2024-
-            (2024)
-            2024.pdf
-            /2024/
 
         Tidak menganggap angka seperti:
             GMG2021
@@ -329,7 +320,7 @@ class Indexer:
             return None
 
         matches = re.findall(
-            r"(?<![A-Za-z0-9])(20\d{2})(?![A-Za-z0-9])",
+            r"(?<!\d)(20\d{2})(?!\d)",
             value,
         )
 
@@ -341,7 +332,7 @@ class Indexer:
     def _detect_year(
             self,
             path: Path,
-            content: str,
+            content: str = "",
     ) -> str:
         """
         Detect document year.
@@ -351,7 +342,9 @@ class Indexer:
         1. Filename
         2. Folder/path
         3. Document content
-        4. Empty string
+
+        Content hanya digunakan jika tahun tidak ditemukan
+        dari filename atau folder.
         """
 
         # --------------------------------------------------------------
@@ -382,87 +375,49 @@ class Indexer:
 
         if content:
 
-            content_year = self._detect_year_from_content(
-                content
-            )
+            content_patterns = [
+                # Contoh:
+                # KOTA PONTIANAK, 17 JUNI 2025
+                # PONTIANAK, 17 JUNI 2025
+                r"\b(?:KOTA\s+)?[A-Z][A-Z\s]+,\s*"
+                r"\d{1,2}\s+"
+                r"(?:JANUARI|FEBRUARI|MARET|APRIL|MEI|JUNI|"
+                r"JULI|AGUSTUS|SEPTEMBER|OKTOBER|NOVEMBER|DESEMBER)"
+                r"\s+(20\d{2})\b",
 
-            if content_year:
-                return content_year
+                # Tanggal 17 Juni 2025
+                r"\bTANGGAL\s*:?\s*\d{1,2}\s+"
+                r"(?:JANUARI|FEBRUARI|MARET|APRIL|MEI|JUNI|"
+                r"JULI|AGUSTUS|SEPTEMBER|OKTOBER|NOVEMBER|DESEMBER)"
+                r"\s+(20\d{2})\b",
+
+                # Tahun Pajak 2025
+                r"\bTAHUN\s+PAJAK\s*:?\s*(20\d{2})\b",
+
+                # Masa Pajak 2025
+                r"\bMASA\s+PAJAK\s*:?\s*(20\d{2})\b",
+
+                # Tahun 2025 / Tahun: 2025
+                r"\bTAHUN\s*:?\s*(20\d{2})\b",
+            ]
+
+            content_upper = content.upper()
+
+            for pattern in content_patterns:
+
+                match = re.search(
+                    pattern,
+                    content_upper,
+                )
+
+                if match:
+                    return match.group(1)
 
         # --------------------------------------------------------------
         # 4. TIDAK DITEMUKAN
         # --------------------------------------------------------------
 
         return ""
-
-    @staticmethod
-    def _detect_year_from_content(
-            content: str,
-    ) -> Optional[str]:
-        """
-        Detect likely document year from content.
-
-        Mengutamakan pola yang secara eksplisit menyebut tahun,
-        misalnya:
-
-            TAHUN 2024
-            TAHUN: 2024
-            Tahun 2024
-            PERIODE 2024
-            TAHUN BUKU 2024
-            PER 31 DES 2024
-
-        Jika tidak ditemukan pola tersebut,
-        fallback ke tahun 20xx yang paling sering muncul.
-        """
-
-        if not content:
-            return None
-
-        # --------------------------------------------------------------
-        # POLA EKSPLISIT
-        # --------------------------------------------------------------
-
-        patterns = [
-            r"\bTAHUN\s*(?:BUKU\s*)?[:\-]?\s*(20\d{2})\b",
-            r"\bPERIODE\s*[:\-]?\s*(20\d{2})\b",
-            r"\bPER\s+\d{1,2}\s+\w+\s+(20\d{2})\b",
-            r"\bUNTUK\s+TAHUN\s+(20\d{2})\b",
-            r"\bTAHUN\s+PAJAK\s+(20\d{2})\b",
-        ]
-
-        for pattern in patterns:
-
-            match = re.search(
-                pattern,
-                content,
-                flags=re.IGNORECASE,
-            )
-
-            if match:
-                return match.group(1)
-
-        # --------------------------------------------------------------
-        # FALLBACK
-        # --------------------------------------------------------------
-
-        years = re.findall(
-            r"\b(20\d{2})\b",
-            content,
-        )
-
-        if not years:
-            return None
-
-        counts: Dict[str, int] = {}
-
-        for year in years:
-            counts[year] = counts.get(year, 0) + 1
-
-        return max(
-            counts,
-            key=counts.get,
-        )
 
     # ------------------------------------------------------------------
     # SEARCH

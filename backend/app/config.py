@@ -49,8 +49,13 @@ class Settings(BaseSettings):
 
     @property
     def chroma_persist_path(self) -> Path:
-        return Path(self.chroma_persist_dir)
+        project_root = Path(__file__).resolve().parents[2]
+        path = Path(self.chroma_persist_dir)
 
+        if not path.is_absolute():
+            path = project_root / path
+
+        return path.resolve()
 
 # Module-level singleton — override via environment variables or .env
 settings = Settings()

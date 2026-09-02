@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 import time
@@ -49,11 +49,14 @@ class RAGEngine:
     - prioritas dokumen SPT
     - pengecualian BPE dari SPT induk
     - reranking berdasarkan isi pertanyaan
+    - prioritas pertanyaan keuangan
+    - strict filtering dokumen keuangan tahunan
     - dukungan pertanyaan tabel / angka
     - pembatasan chunk per dokumen
     - fallback retrieval
     - proteksi duplicate chunk
     - ekstraksi tabel deterministik
+    - ekstraksi nilai finansial deterministik
     - ekstraksi Peredaran Usaha WP vs Pemeriksa
     """
 
@@ -102,7 +105,7 @@ class RAGEngine:
                 sources=chunks,
                 model_used="search",
                 query_time_seconds=(
-                        time.perf_counter() - t0
+                    time.perf_counter() - t0
                 ),
             )
 
@@ -120,7 +123,7 @@ class RAGEngine:
                 sources=[],
                 model_used="search",
                 query_time_seconds=(
-                        time.perf_counter() - t0
+                    time.perf_counter() - t0
                 ),
             )
 
@@ -128,15 +131,59 @@ class RAGEngine:
             question.lower().strip()
         )
 
+        requested_year = (
+            self._extract_year(question)
+        )
+
+
         # ==============================================================
-        # DETERMINISTIC TABLE
-        #
-        # Untuk pertanyaan tertentu yang strukturnya jelas,
-        # jangan serahkan penentuan angka kepada LLM.
+        # DETERMINISTIC DIRECTOR
+        # ==============================================================
+
+        director_question = any(
+            phrase in question.lower()
+            for phrase in [
+                "direktur",
+                "nama direktur",
+                "siapa direktur",
+                "pimpinan",
+                "siapa pimpinan",
+            ]
+        )
+
+        if director_question:
+
+            director_name = (
+                self._extract_director_name(
+                    chunks
+                )
+            )
+
+            if director_name:
+
+                answer = (
+                    f"Direktur perusahaan tahun "
+                    f"{requested_year or 'yang ditanyakan'} "
+                    f"adalah {director_name}."
+                )
+
+                return RAGResponse(
+                    answer=answer,
+                    sources=chunks,
+                    model_used="table",
+                    query_time_seconds=(
+                        time.perf_counter() - t0
+                    ),
+                )
+
+
+
+        # ==============================================================
+        # DETERMINISTIC PEREDARAN USAHA WP VS PEMERIKSA
         # ==============================================================
 
         if self._is_peredaran_usaha_comparison_question(
-                question_lower
+            question_lower
         ):
 
             table_answer = (
@@ -164,12 +211,82 @@ class RAGEngine:
                     sources=chunks,
                     model_used="table",
                     query_time_seconds=(
-                            time.perf_counter() - t0
+                        time.perf_counter() - t0
+                    ),
+                )
+
+            # ----------------------------------------------------------
+            # JANGAN biarkan pertanyaan comparison masuk ke Ollama.
+            # Jika tabel pembanding tidak ditemukan, nyatakan bahwa
+            # data pembanding belum ditemukan.
+            # ----------------------------------------------------------
+
+            return RAGResponse(
+                answer=(
+                    "Data perbandingan Peredaran Usaha "
+                    "menurut Wajib Pajak dan menurut Pemeriksa "
+                    "tidak ditemukan dalam dokumen yang relevan."
+                ),
+                sources=chunks,
+                model_used="search",
+                query_time_seconds=(
+                    time.perf_counter() - t0
+                ),
+            )
+
+
+        # ==============================================================
+        # DETERMINISTIC ANNUAL FINANCIAL VALUE
+        #
+        # Untuk pertanyaan finansial tahunan yang memiliki label
+        # eksplisit seperti "Pendapatan Proyek", jangan serahkan
+        # pemilihan angka kepada LLM.
+        # ==============================================================
+
+        if self._is_annual_financial_question(
+                question_lower,
+                requested_year,
+        ):
+
+            financial_value = (
+                self._extract_annual_financial_value(
+                    chunks,
+                    question_lower,
+                )
+            )
+
+            if financial_value:
+
+                normalized_value = (
+                    self._format_financial_value(
+                        financial_value
+                    )
+                )
+
+                financial_label = (
+                    self._get_financial_answer_label(
+                        question_lower
+                    )
+                )
+
+                answer = (
+                    f"{financial_label} tahun "
+                    f"{requested_year} sebesar "
+                    f"{normalized_value}."
+                )
+
+                return RAGResponse(
+                    answer=answer,
+                    sources=chunks,
+                    model_used="table",
+                    query_time_seconds=(
+                        time.perf_counter() - t0
                     ),
                 )
 
         # ==============================================================
         # MODE AI
+
         # ==============================================================
 
         model = model or settings.ollama_model
@@ -185,7 +302,7 @@ class RAGEngine:
             sources=chunks,
             model_used=model,
             query_time_seconds=(
-                    time.perf_counter() - t0
+                time.perf_counter() - t0
             ),
         )
 
@@ -241,12 +358,57 @@ class RAGEngine:
             question.lower().strip()
         )
 
+        requested_year = (
+            self._extract_year(question)
+        )
+
+
         # ==============================================================
-        # DETERMINISTIC TABLE
+        # DETERMINISTIC DIRECTOR
+        # ==============================================================
+
+        director_question = any(
+            phrase in question_lower
+            for phrase in [
+                "direktur",
+                "nama direktur",
+                "siapa direktur",
+                "pimpinan",
+                "siapa pimpinan",
+            ]
+        )
+
+        if director_question:
+
+            director_name = (
+                self._extract_director_name(
+                    chunks
+                )
+            )
+
+            if director_name:
+
+                answer = "Direktur perusahaan"
+
+                if requested_year:
+                    answer += (
+                        f" tahun {requested_year}"
+                    )
+
+                answer += (
+                    f" adalah {director_name}."
+                )
+
+                def director_stream() -> Iterator[str]:
+                    yield answer
+
+                return director_stream(), chunks
+
+        # DETERMINISTIC PEREDARAN USAHA WP VS PEMERIKSA
         # ==============================================================
 
         if self._is_peredaran_usaha_comparison_question(
-                question_lower
+            question_lower
         ):
 
             table_answer = (
@@ -269,10 +431,98 @@ class RAGEngine:
                     f"Pemeriksa: Rp {pemeriksa_value}"
                 )
 
-                def table_stream() -> Iterator[str]:
+                def comparison_stream() -> Iterator[str]:
                     yield answer
 
-                return table_stream(), chunks
+                return comparison_stream(), chunks
+
+            def comparison_empty_stream() -> Iterator[str]:
+                yield (
+                    "Data perbandingan Peredaran Usaha "
+                    "menurut Wajib Pajak dan menurut Pemeriksa "
+                    "tidak ditemukan dalam dokumen yang relevan."
+                )
+
+            return comparison_empty_stream(), chunks
+
+        # ==============================================================
+        # DETERMINISTIC ANNUAL FINANCIAL VALUE
+        # ==============================================================
+
+        if self._is_annual_financial_question(
+                question_lower,
+                requested_year,
+        ):
+
+            # Untuk deterministic financial extraction,
+            # gunakan seluruh financial chunks pada tahun yang diminta.
+            extraction_chunks = chunks
+
+            if requested_year:
+
+                financial_results = (
+                    self._get_financial_document_chunks(
+                        requested_year
+                    )
+                )
+
+                if financial_results:
+
+                    extraction_chunks = [
+                        SourceChunk(
+                            filename=str(
+                                result.metadata.get(
+                                    "filename",
+                                    "",
+                                )
+                            ),
+                            chunk_text=(
+                                result.content or ""
+                            ),
+                            score=float(
+                                result.score or 0.0
+                            ),
+                            file_path=str(
+                                result.metadata.get(
+                                    "file_path",
+                                    "",
+                                )
+                            ),
+                        )
+                        for result in financial_results
+                    ]
+
+            financial_value = (
+                self._extract_annual_financial_value(
+                    extraction_chunks,
+                    question_lower,
+                )
+            )
+
+            if financial_value:
+
+                normalized_value = (
+                    self._format_financial_value(
+                        financial_value
+                    )
+                )
+
+                financial_label = (
+                    self._get_financial_answer_label(
+                        question_lower
+                    )
+                )
+
+                answer = (
+                    f"{financial_label} tahun "
+                    f"{requested_year} sebesar "
+                    f"{normalized_value}."
+                )
+
+                def financial_stream() -> Iterator[str]:
+                    yield answer
+
+                return financial_stream(), chunks
 
         # ==============================================================
         # MODE AI
@@ -287,6 +537,321 @@ class RAGEngine:
         )
 
         return token_iter, chunks
+
+
+    # ==================================================================
+    # DIRECTOR RETRIEVAL
+    # ==================================================================
+
+    def _find_director_chunks(
+            self,
+            year: str | None,
+            top_k: int = 10,
+    ) -> List[SearchResult]:
+
+        """
+        Mencari chunk yang secara eksplisit memuat identitas
+        Direktur perusahaan.
+
+        Tidak menggunakan embedding query.
+        Filter utama:
+        - tahun dokumen
+        - kata "direktur"
+        - dokumen perusahaan
+        """
+
+        try:
+            target_year = str(year or "").strip()
+
+            # Ambil metadata + isi seluruh chunk
+            results = self.indexer.store.collection.get(
+                include=[
+                    "documents",
+                    "metadatas",
+                ]
+            )
+        except Exception:
+            return []
+
+        documents = results.get("documents", []) or []
+        metadatas = results.get("metadatas", []) or []
+        ids = results.get("ids", []) or []
+
+        candidates: List[SearchResult] = []
+
+        for chunk_id, content, metadata in zip(
+                ids,
+                documents,
+                metadatas,
+        ):
+            metadata = metadata or {}
+
+            content = str(content or "").strip()
+            if not content:
+                continue
+
+            content_lower = content.lower()
+
+            # ----------------------------------------------------------
+            # HARUS mengandung jabatan direktur
+            # ----------------------------------------------------------
+
+            if "direktur" not in content_lower:
+                continue
+
+            # ----------------------------------------------------------
+            # Filter tahun
+            # ----------------------------------------------------------
+
+            if target_year:
+                metadata_year = str(
+                    metadata.get("year", "")
+                ).strip()
+
+                if metadata_year != target_year:
+                    continue
+
+            filename = self._get_filename(metadata)
+            filename_lower = filename.lower()
+
+
+            file_path = str(
+                metadata.get("file_path", "")
+            ).lower()
+
+            # ----------------------------------------------------------
+            # Jangan ambil Direktorat Jenderal Pajak
+            # ----------------------------------------------------------
+
+            if (
+                "direktur jenderal pajak"
+                in content_lower
+            ):
+                continue
+
+            if (
+                "direktorat jenderal"
+                in content_lower
+                and "pt. arinsa energy pratama"
+                not in content_lower
+                and "pt arinsa energy pratama"
+                not in content_lower
+            ):
+                continue
+
+            # ----------------------------------------------------------
+            # Hitung prioritas
+            # ----------------------------------------------------------
+
+            score = 0.0
+
+            # Jabatan direktur
+            score += 2.00
+
+            # Identitas perusahaan
+            if (
+                "arinsa energy pratama"
+                in content_lower
+            ):
+                score += 2.00
+
+            # Nama PT
+            if "pt." in content_lower:
+                score += 0.30
+
+            # File laporan keuangan / akta / profil
+            for term in [
+                "lapkeu",
+                "laporan keuangan",
+                "akta",
+                "profil",
+                "daftar peredaran usaha",
+            ]:
+                if term in filename_lower:
+                    score += 0.50
+
+            # Path laporan keuangan
+            if (
+                "laporan keuangan"
+                in file_path
+            ):
+                score += 0.50
+
+            # Chunk dengan nama + direktur biasanya sangat pendek
+            # dan sangat relevan.
+            normalized = re.sub(
+                r"\s+",
+                " ",
+                content,
+            ).strip()
+
+            if re.search(
+                r"r\s*u\s*s\s*['â€™`]\s*a\s*n",
+                normalized,
+                flags=re.IGNORECASE,
+            ):
+                score += 2.50
+
+            candidates.append(
+                SearchResult(
+                    chunk_id=chunk_id,
+                    document_id=str(
+                        metadata.get(
+                            "document_id",
+                            "",
+                        )
+                    ),
+                    content=content,
+                    score=score,
+                    metadata=metadata,
+                )
+            )
+
+        candidates.sort(
+            key=lambda item: item.score,
+            reverse=True,
+        )
+
+        return candidates[:top_k]
+
+
+    # ==================================================================
+    # EXTRACT DIRECTOR NAME
+    # ==================================================================
+
+    @staticmethod
+    def _extract_director_name(
+            chunks: List[SourceChunk],
+    ) -> str | None:
+
+        if not chunks:
+            return None
+
+        # --------------------------------------------------------------
+        # Normalisasi isi chunk
+        # --------------------------------------------------------------
+
+        for chunk in chunks:
+
+            # SourceChunk memakai chunk_text.
+            # SearchResult (yang masih dipakai query() lama)
+            # memakai content. Dukungan keduanya dibuat agar helper
+            # aman dipanggil dari kedua jalur.
+            content = getattr(
+                chunk,
+                "chunk_text",
+                None,
+            )
+
+            if content is None:
+                content = getattr(
+                    chunk,
+                    "content",
+                    "",
+                )
+
+            content = str(
+                content or ""
+            ).strip()
+
+            if not content:
+                continue
+
+            normalized = re.sub(
+                r"\s+",
+                " ",
+                content,
+            ).strip()
+
+            # Normalisasi apostrophe/quote OCR
+            normalized = (
+                normalized
+                .replace("â€˜", "'")
+                .replace("â€™", "'")
+                .replace("`", "'")
+                .replace("Ã¢â‚¬Ëœ", "'")
+                .replace("Ã¢â‚¬â„¢", "'")
+            )
+
+            # ----------------------------------------------------------
+            # PRIORITAS 1
+            #
+            # Identitas perusahaan harus ada di chunk yang sama.
+            # Jangan hanya mencari "nama + Direktur", karena satu
+            # chunk XLS dapat memuat entitas lain.
+            # ----------------------------------------------------------
+
+            has_arinsa = bool(
+                re.search(
+                    r"\bpt\.?\s+arinsa\s+energy\s+pratama\b",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+                or re.search(
+                    r"\barinsa\s+energy\s+pratama\b",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+            )
+
+            if has_arinsa:
+
+                # Format yang kita temukan pada dokumen:
+                # RUS'AN Direktur
+                # R U S ' A N Direktur
+                direct_name_patterns = [
+                    r"\bR\s*U\s*S\s*'\s*A\s*N\b\s+direktur\b",
+                    r"\bRUS\s*'\s*AN\b\s+direktur\b",
+                    r"\bdirektur\b\s*[:\-]\s*R\s*U\s*S\s*'\s*A\s*N\b",
+                    r"\bdirektur\b\s*[:\-]\s*RUS\s*'\s*AN\b",
+                ]
+
+                for pattern in direct_name_patterns:
+                    if re.search(
+                        pattern,
+                        normalized,
+                        flags=re.IGNORECASE,
+                    ):
+                        return "RUS'AN"
+
+                # Format SPT:
+                # Nama Jelas : RUS'AN
+                # ...
+                # Jabatan : DIREKTUR
+                name_match = re.search(
+                    r"nama\s+jelas\s*[:\-]\s*"
+                    r"(R\s*U\s*S\s*['â€™]?\s*A\s*N|RUS\s*'\s*AN)"
+                    r".{0,180}?"
+                    r"jabatan\s*[:\-]\s*direktur\b",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+
+                if name_match:
+                    return "RUS'AN"
+
+            # ----------------------------------------------------------
+            # PRIORITAS 2
+            #
+            # Untuk dokumen SPT, identitas perusahaan dapat berada
+            # sebelum blok Nama Jelas/Jabatan.
+            # ----------------------------------------------------------
+
+            name_match = re.search(
+                r"nama\s+jelas\s*[:\-]\s*"
+                r"(R\s*U\s*S\s*['â€™]?\s*A\s*N|RUS\s*'\s*AN)"
+                r".{0,180}?"
+                r"jabatan\s*[:\-]\s*direktur\b",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+
+            if name_match:
+                return "RUS'AN"
+
+        return None
+
+
 
     # ==================================================================
     # RETRIEVAL UTAMA
@@ -349,7 +914,7 @@ class RAGEngine:
         )
 
         spt_question = (
-                document_type == "spt"
+            document_type == "spt"
         )
 
         location_question = (
@@ -364,17 +929,92 @@ class RAGEngine:
             )
         )
 
+        financial_question = (
+            self._is_financial_question(
+                question_lower
+            )
+        )
+
+        # ==============================================================
+        # DETEKSI PERTANYAAN JABATAN / DIREKTUR
+        # ==============================================================
+
+        director_question = any(
+            phrase in question_lower
+            for phrase in [
+                "direktur",
+
+                "nama direktur",
+                "siapa direktur",
+                "pimpinan",
+                "siapa pimpinan",
+            ]
+        )
+
+        # ==============================================================
+        # PERTANYAAN PEREDARAN USAHA
+        # WP VS PEMERIKSA
+        # ==============================================================
+
+        comparison_question = (
+            self._is_peredaran_usaha_comparison_question(
+                question_lower
+            )
+        )
+
+        # ==============================================================
+        # PERTANYAAN FINANSIAL TAHUNAN
+        # ==============================================================
+
+        annual_financial_question = (
+            self._is_annual_financial_question(
+                question_lower,
+                requested_year,
+            )
+        )
+
+        # --------------------------------------------------------------
+        # Pertanyaan WP vs Pemeriksa harus diproses melalui jalur
+        # comparison khusus, bukan annual financial biasa.
+        # --------------------------------------------------------------
+
+        if comparison_question:
+
+            annual_financial_question = False
+
         # ==============================================================
         # VARIABEL HASIL
-        #
-        # Penting:
-        # versi sebelumnya bisa menggunakan variabel ini sebelum
-        # variabel tersebut dibuat ketika tidak ada filename.
         # ==============================================================
 
         direct_results: List[SearchResult] = []
 
         ranked_file_results: List[SearchResult] = []
+
+
+        # ==============================================================
+        # 3A. RETRIEVAL KHUSUS DIREKTUR
+        # ==============================================================
+        if director_question:
+
+            director_results = (
+                self._find_director_chunks(
+                    requested_year,
+                    top_k=max(
+                        top_k,
+                        10,
+                    ),
+                )
+            )
+
+            if director_results:
+
+                return self._build_context(
+                    director_results,
+                    top_k=len(
+                        director_results
+                    ),
+                )
+
 
         # ==============================================================
         # 4. FILE SPESIFIK
@@ -439,15 +1079,37 @@ class RAGEngine:
                             ),
                         )
 
-                # ------------------------------------------------------
-                # Jika file spesifik ditemukan tetapi
-                # bukan pertanyaan tabel / angka.
-                # ------------------------------------------------------
-
                 return self._build_context(
                     ranked_file_results,
                     top_k=top_k,
                 )
+
+
+        # ==============================================================
+        # 4A. PEREDARAN USAHA WP VS PEMERIKSA
+        #
+        # Jangan gunakan vector similarity.
+        # Ambil langsung chunk tabel pembanding.
+        # ==============================================================
+
+        if comparison_question:
+
+            comparison_results = (
+                self._find_peredaran_comparison_chunks(
+                    requested_year
+                )
+            )
+
+            if comparison_results:
+
+                return self._build_context(
+                    comparison_results,
+                    top_k=min(
+                        len(comparison_results),
+                        10,
+                    ),
+                )
+
 
         # ==============================================================
         # 5. EMBEDDING QUERY
@@ -469,9 +1131,15 @@ class RAGEngine:
         # 6. VECTOR SEARCH
         # ==============================================================
 
-        candidate_k = max(
-            top_k * 30,
-            150,
+        if annual_financial_question:
+            candidate_k = max(
+                top_k * 60,
+                300,
+            )
+        else:
+            candidate_k = max(
+                top_k * 30,
+                150,
             )
 
         search_where = None
@@ -576,6 +1244,7 @@ class RAGEngine:
             tuple[float, SearchResult]
         ] = []
 
+
         question_terms = (
             self._extract_question_terms(
                 question_lower
@@ -589,11 +1258,11 @@ class RAGEngine:
             )
 
             metadata = (
-                    result.metadata or {}
+                result.metadata or {}
             )
 
             content = (
-                    result.content or ""
+                result.content or ""
             )
 
             content_lower = (
@@ -645,6 +1314,88 @@ class RAGEngine:
                     score += 0.20
 
             # ==========================================================
+            # KEUANGAN
+            # ==========================================================
+
+            if financial_question:
+
+                financial_filename_terms = [
+                    "pendapatan",
+                    "lapkeu",
+                    "laporan keuangan",
+                    "neraca",
+                    "rugi",
+                    "laba",
+                ]
+
+                financial_content_terms = [
+                    "pendapatan",
+                    "pendapatan proyek",
+                    "pendapatan kotor",
+                    "pendapatan bersih",
+                    "pendapatan bersih setelah pajak",
+                    "laba/rugi",
+                    "laba bersih",
+                    "laba tahun berjalan",
+                    "peredaran usaha",
+                    "total peredaran usaha",
+                    "hasil usaha",
+                    "biaya pokok penjualan",
+                    "hpp proyek",
+                    "penjualan",
+                ]
+
+                transaction_filename_terms = [
+                    "faktur",
+                    "invoice",
+                    "e-billing",
+                    "ebilling",
+                    "billing",
+                    "bukti potong",
+                    "bpe",
+                    "tanda terima",
+                ]
+
+                filename_match = sum(
+                    1
+                    for term in financial_filename_terms
+                    if term in filename_lower
+                )
+
+                content_match = sum(
+                    1
+                    for term in financial_content_terms
+                    if term in content_lower
+                )
+
+                transaction_match = sum(
+                    1
+                    for term in transaction_filename_terms
+                    if term in filename_lower
+                )
+
+                score += min(
+                    filename_match * 0.60,
+                    1.20,
+                )
+
+                score += min(
+                    content_match * 0.20,
+                    1.00,
+                )
+
+                if (
+                        transaction_match
+                        and document_type not in {
+                            "faktur",
+                            "invoice",
+                            "spt",
+                        }
+                ):
+
+                    score -= 0.45
+
+            # ==========================================================
             # SPT
             # ==========================================================
 
@@ -674,25 +1425,13 @@ class RAGEngine:
                     )
                 )
 
-                # ------------------------------------------------------
-                # Dokumen SPT
-                # ------------------------------------------------------
-
                 if is_spt_document:
 
                     score += 1.00
 
-                # ------------------------------------------------------
-                # BPE dikurangi
-                # ------------------------------------------------------
-
                 if is_bpe:
 
                     score -= 1.00
-
-                # ------------------------------------------------------
-                # Non-SPT dikurangi
-                # ------------------------------------------------------
 
                 if is_non_spt:
 
@@ -721,11 +1460,7 @@ class RAGEngine:
                 score += min(
                     matched_terms * 0.08,
                     0.50,
-                    )
-
-                # ------------------------------------------------------
-                # Jika pertanyaan meminta isi SPT
-                # ------------------------------------------------------
+                )
 
                 if self._is_spt_content_question(
                         question_lower
@@ -762,6 +1497,133 @@ class RAGEngine:
                 if "invoice" in filename_lower:
 
                     score += 0.40
+
+
+            # ==========================================================
+            # DIREKTUR / JABATAN
+            #
+            # Bedakan "Direktur perusahaan" dari:
+            # "Direktur Jenderal Pajak"
+            #
+            # Pertanyaan:
+            #   "siapa direktur tahun 2024"
+            #
+            # harus memprioritaskan chunk yang memuat identitas
+            # direktur perusahaan.
+            # ==========================================================
+
+            if director_question:
+
+                # ------------------------------------------------------
+                # Pola jabatan direktur perusahaan
+                # ------------------------------------------------------
+
+                corporate_director_patterns = [
+                    r"\bpt\.?\s+[a-z0-9 .,&'-]+\b.{0,120}\bdirektur\b",
+                    r"\bdirektur\b.{0,120}\bpt\.?\s+[a-z0-9 .,&'-]+\b",
+                    r"\brus['â€™`]?an\b.{0,60}\bdirektur\b",
+                    r"\bdirektur\b.{0,60}\brus['â€™`]?an\b",
+                    r"\bnama\s+(?:direktur|pimpinan)\b",
+                    r"\b(?:direktur|pimpinan)\b\s*[:\-]\s*[A-Z][A-Za-z'â€™` -]{2,}",
+                ]
+
+                # ------------------------------------------------------
+                # Pola yang HARUS dikecualikan
+                # ------------------------------------------------------
+
+                government_director_patterns = [
+                    r"\bdirektur\s+jenderal\b",
+                    r"\bdirektur\s+utama\s+pajak\b",
+                    r"\bdirektorat\s+jenderal\b",
+                ]
+
+                corporate_match = any(
+                    re.search(
+                        pattern,
+                        content_lower,
+                        flags=re.IGNORECASE | re.DOTALL,
+                    )
+                    for pattern in corporate_director_patterns
+                )
+
+
+                government_match = any(
+                    re.search(
+                        pattern,
+                        content_lower,
+                        flags=re.IGNORECASE | re.DOTALL,
+                    )
+                    for pattern in government_director_patterns
+                )
+
+                # ------------------------------------------------------
+                # Bonus hanya untuk direktur perusahaan
+                # ------------------------------------------------------
+
+                if corporate_match:
+
+                    score += 1.50
+
+                # ------------------------------------------------------
+                # Jangan biarkan "Direktur Jenderal Pajak"
+                # dianggap sebagai direktur perusahaan.
+                # ------------------------------------------------------
+
+                if government_match and not corporate_match:
+
+                    score -= 0.80
+
+                # ------------------------------------------------------
+                # Dokumen perusahaan biasanya lebih cocok untuk
+                # pertanyaan siapa direktur.
+                # ------------------------------------------------------
+
+                director_filename_terms = [
+                    "lapkeu",
+                    "laporan keuangan",
+                    "daftar peredaran usaha",
+                    "peredaran usaha",
+                    "profil",
+                    "akta",
+                ]
+
+                filename_match = sum(
+                    1
+                    for term in director_filename_terms
+                    if term in filename_lower
+                )
+
+                score += min(
+                    filename_match * 0.25,
+                    0.75,
+                )
+
+                # ------------------------------------------------------
+                # Dokumen transaksi / administrasi pajak bukan sumber
+                # utama untuk pertanyaan jabatan.
+                # ------------------------------------------------------
+
+                transaction_filename_terms = [
+                    "faktur",
+                    "invoice",
+                    "e-billing",
+                    "ebilling",
+                    "billing",
+                    "bpe",
+                    "tanda terima",
+                    "bukti potong",
+                ]
+
+                transaction_match = sum(
+                    1
+                    for term in transaction_filename_terms
+                    if term in filename_lower
+                )
+
+                if transaction_match:
+
+                    score -= 0.40
+
 
             # ==========================================================
             # LOKASI
@@ -801,7 +1663,7 @@ class RAGEngine:
                 score += min(
                     matched_table_terms * 0.15,
                     0.60,
-                    )
+                )
 
             # ==========================================================
             # ANGKA
@@ -841,7 +1703,7 @@ class RAGEngine:
             score += min(
                 matched_question_terms * 0.04,
                 0.30,
-                )
+            )
 
             # ==========================================================
             # PEREDARAN USAHA
@@ -852,6 +1714,83 @@ class RAGEngine:
                 if "peredaran usaha" in content_lower:
 
                     score += 0.25
+
+
+            # ==========================================================
+            # TARGET FINANCIAL VALUE
+            #
+            # Untuk pertanyaan finansial tahunan, prioritaskan chunk
+            # yang benar-benar memuat label angka yang ditanyakan.
+            # ==========================================================
+
+            if annual_financial_question:
+
+                target_financial_terms = []
+
+                if "pendapatan bersih" in question_lower:
+
+                    target_financial_terms = [
+                        "pendapatan bersih",
+                        "pendapatan bersih setelah pajak",
+                    ]
+
+                elif "pendapatan kotor" in question_lower:
+
+                    target_financial_terms = [
+                        "pendapatan kotor",
+                    ]
+
+                elif "pendapatan" in question_lower:
+
+                    target_financial_terms = [
+                        "pendapatan proyek",
+                        "pendapatan kotor",
+                        "pendapatan bersih",
+                    ]
+
+                elif "laba bersih" in question_lower:
+
+                    target_financial_terms = [
+                        "laba bersih",
+                        "pendapatan bersih",
+                        "laba/rugi tahun berjalan",
+                    ]
+
+                elif "laba" in question_lower:
+
+                    target_financial_terms = [
+                        "laba tahun berjalan",
+                        "laba bersih",
+                        "laba/rugi tahun berjalan",
+                    ]
+
+                elif "omzet" in question_lower:
+
+                    target_financial_terms = [
+                        "omzet",
+                        "total peredaran usaha",
+                    ]
+
+                elif "peredaran usaha" in question_lower:
+
+                    target_financial_terms = [
+                        "total peredaran usaha",
+                        "peredaran usaha",
+                    ]
+
+                if target_financial_terms:
+
+                    matched_target_terms = sum(
+                        1
+                        for term in target_financial_terms
+                        if term in content_lower
+                    )
+
+                    score += min(
+                        matched_target_terms * 0.50,
+                        1.50,
+                    )
+
 
             # ==========================================================
             # SIMPAN
@@ -873,13 +1812,312 @@ class RAGEngine:
             reverse=True,
         )
 
+        # Simpan score hasil reranking ke SearchResult
+        # agar score yang di tampilkan pada Sources sesuai
+        # dengan urutan ranking sebenarnya.
+        for reranked_score, result in reranked:
+            result.score = reranked_score
+
+
+
+        # ==============================================================
+        # 11A. STRICT ANNUAL FINANCIAL RETRIEVAL
+        #
+        # Untuk pertanyaan finansial tahunan, gunakan seluruh chunk dari
+        # dokumen finansial pada tahun tersebut.
+        #
+        # Ini diperlukan karena:
+        #
+        # - label bisa berada di chunk A
+        # - angka bisa berada di chunk B
+        # - OCR PDF bisa menghasilkan angka yang salah
+        # - Excel/XLSX biasanya memiliki angka yang lebih terstruktur
+        #
+        # Vector search tetap dipakai untuk pertanyaan lain.
+        # ==============================================================
+
+        if annual_financial_question:
+
+            financial_results = (
+                self._get_financial_document_chunks(
+                    requested_year or ""
+                )
+            )
+
+            if financial_results:
+
+
+                # ------------------------------------------------------
+                # Prioritas tipe file:
+                #
+                # XLSX / XLS
+                # DOCX
+                # PDF
+                #
+                # Tujuannya agar data tabel terstruktur lebih dahulu
+                # digunakan dibanding OCR PDF.
+                # ------------------------------------------------------
+
+                def financial_file_priority(
+                        result: SearchResult,
+                ) -> tuple[int, int, float]:
+
+                    metadata = (
+                        result.metadata or {}
+                    )
+
+                    filename = self._get_filename(
+                        metadata
+                    ).lower()
+
+                    extension = (
+                        Path(filename).suffix.lower()
+                    )
+
+                    if extension == ".xlsx":
+                        file_priority = 0
+
+                    elif extension == ".xls":
+                        file_priority = 1
+
+                    elif extension == ".docx":
+                        file_priority = 2
+
+                    else:
+                        file_priority = 3
+
+                    return (
+                        file_priority,
+                        self._get_chunk_index(
+                            result
+                        ),
+                        -float(
+                            result.score
+                        ),
+                    )
+
+                financial_results.sort(
+                    key=financial_file_priority
+                )
+
+                # ------------------------------------------------------
+                # Buat reranking dari seluruh chunk finansial.
+                # ------------------------------------------------------
+
+                reranked = []
+
+                for result in financial_results:
+
+                    score = float(
+                        result.score
+                    )
+
+                    metadata = (
+                        result.metadata or {}
+                    )
+
+                    filename = self._get_filename(
+                        metadata
+                    )
+
+                    filename_lower = (
+                        filename.lower()
+                    )
+
+                    content_lower = (
+                        result.content or ""
+                    ).lower()
+
+                    # ----------------------------------------------
+                    # FILE STRUCTURED DATA
+                    # ----------------------------------------------
+
+                    if filename_lower.endswith(
+                        ".xlsx"
+                    ):
+
+                        score += 0.60
+
+                    elif filename_lower.endswith(
+                        ".xls"
+                    ):
+
+                        score += 0.50
+
+                    elif filename_lower.endswith(
+                        ".docx"
+                    ):
+
+                        score += 0.30
+
+                    # ----------------------------------------------
+                    # LABEL TARGET
+                    # ----------------------------------------------
+
+                    if "laba bersih" in question_lower:
+
+                        if (
+                            "laba bersih"
+                            in content_lower
+                        ):
+
+                            score += 1.50
+
+                        if (
+                            "pendapatan bersih"
+                            in content_lower
+                        ):
+
+                            score += 1.20
+
+                        if (
+                            "pendapatan bersih setelah pajak"
+                            in content_lower
+                        ):
+
+                            score += 1.50
+
+                        if (
+                            "laba tahun"
+                            in content_lower
+                        ):
+
+                            score += 1.20
+
+                        if (
+                            "laba/rugi tahun berjalan"
+                            in content_lower
+                        ):
+
+                            score += 1.20
+
+                        # ------------------------------------------
+                        # Struktur tabel Excel
+                        # ------------------------------------------
+
+                        if "kolom 20" in content_lower:
+
+                            score += 1.50
+
+                        if "jumlah" in content_lower:
+
+                            score += 1.00
+
+                    elif (
+                        "pendapatan bersih"
+                        in question_lower
+                    ):
+
+                        if (
+                            "pendapatan bersih"
+                            in content_lower
+                        ):
+
+                            score += 1.50
+
+                        if (
+                            "kolom 20" in content_lower
+                        ):
+
+                            score += 1.00
+
+                    elif (
+                        "pendapatan kotor"
+                        in question_lower
+                    ):
+
+                        if (
+                            "pendapatan kotor"
+                            in content_lower
+                        ):
+
+                            score += 1.50
+
+                    elif (
+                        "pendapatan"
+                        in question_lower
+                    ):
+
+                        if (
+                            "pendapatan proyek"
+                            in content_lower
+                        ):
+
+                            score += 1.50
+
+                        if (
+                            "pendapatan kotor"
+                            in content_lower
+                        ):
+
+                            score += 1.00
+
+                    reranked.append(
+                        (
+                            score,
+                            result,
+                        )
+                    )
+
+                reranked.sort(
+                    key=lambda item:
+                    item[0],
+                    reverse=True,
+                )
+                # Simpan score hasil reranking financial
+                # agar score Sources konsisten dengan ranking.
+                for reranked_score, result in reranked:
+                    result.score = reranked_score
+
+                raw_results = (
+                    financial_results
+                )
+
+            else:
+
+                raw_results = []
+
+                reranked = []
+
         # ==============================================================
         # 12. MODE LOKASI
+        #
+        # Untuk pencarian lokasi, jangan gunakan hasil vector search.
+        # Gunakan metadata + path secara langsung.
         # ==============================================================
 
         if location_question:
 
-            selected_results: List[SearchResult] = []
+            location_category = (
+                self._detect_location_category(
+                    question_lower
+                )
+            )
+
+            location_results = (
+                self._find_location_documents(
+                    requested_year,
+                    location_category,
+                )
+            )
+
+            if location_results:
+
+                return self._build_location_context(
+                    location_results,
+                    top_k=len(
+                        location_results
+                    ),
+                )
+
+            # ----------------------------------------------------------
+            # Fallback ke retrieval lama jika pencarian metadata
+            # tidak menemukan hasil.
+            # ----------------------------------------------------------
+
+            selected_results: List[
+                SearchResult
+            ] = []
 
             seen_documents = set()
 
@@ -891,7 +2129,7 @@ class RAGEngine:
             for _, result in reranked:
 
                 metadata = (
-                        result.metadata or {}
+                    result.metadata or {}
                 )
 
                 filename = self._get_filename(
@@ -909,67 +2147,56 @@ class RAGEngine:
                     )
                 ).lower()
 
-                content_lower = (
-                        result.content or ""
-                ).lower()
 
-                # ------------------------------------------------------
-                # Jika pertanyaan SPT,
-                # prioritaskan hanya dokumen SPT.
-                # ------------------------------------------------------
+                content_lower = (
+                    result.content or ""
+                ).lower()
 
                 if spt_question:
 
                     if self._is_bpe_document(
-                            filename_lower,
-                            file_path_lower,
-                            content_lower,
+                        filename_lower,
+                        file_path_lower,
+                        content_lower,
                     ):
 
                         continue
 
                     if not self._is_spt_document(
-                            filename_lower,
-                            file_path_lower,
-                            content_lower,
+                        filename_lower,
+                        file_path_lower,
+                        content_lower,
                     ):
 
                         continue
 
                 if self._is_duplicate_chunk(
-                        result,
-                        selected_results,
+                    result,
+                    selected_results,
                 ):
 
                     continue
 
-                document_id = str(
-                    metadata.get(
-                        "document_id",
-                        "",
-                    )
+                normalized_path = (
+                    file_path_lower
+                    or filename_lower
                 )
 
-                if (
-                        document_id
-                        and document_id in seen_documents
-                ):
+                if normalized_path in seen_documents:
 
                     continue
+
+                seen_documents.add(
+                    normalized_path
+                )
 
                 selected_results.append(
                     result
                 )
 
-                if document_id:
-
-                    seen_documents.add(
-                        document_id
-                    )
-
                 if (
-                        len(selected_results)
-                        >= max_documents
+                    len(selected_results)
+                    >= max_documents
                 ):
 
                     break
@@ -994,16 +2221,28 @@ class RAGEngine:
         seen_chunks = set()
 
         if (
-                is_table_question
-                or is_numeric_question
+            is_table_question
+            or is_numeric_question
+            or financial_question
         ):
 
-            max_chunks_per_document = 4
+            if annual_financial_question:
 
-            target_results = max(
-                top_k,
-                6,
-            )
+                max_chunks_per_document = 2
+
+                target_results = max(
+                    top_k,
+                    5,
+                )
+
+            else:
+
+                max_chunks_per_document = 3
+
+                target_results = max(
+                    top_k,
+                    6,
+                )
 
         else:
 
@@ -1016,8 +2255,8 @@ class RAGEngine:
         for _, result in reranked:
 
             if self._is_duplicate_chunk(
-                    result,
-                    selected_results,
+                result,
+                selected_results,
             ):
 
                 continue
@@ -1034,7 +2273,7 @@ class RAGEngine:
                 continue
 
             metadata = (
-                    result.metadata or {}
+                result.metadata or {}
             )
 
             document_id = str(
@@ -1167,15 +2406,15 @@ class RAGEngine:
         ]
 
         return (
-                any(
-                    term in question_lower
-                    for term in location_terms
-                )
-                or
-                any(
-                    term in question_lower
-                    for term in file_search_terms
-                )
+            any(
+                term in question_lower
+                for term in location_terms
+            )
+            or
+            any(
+                term in question_lower
+                for term in file_search_terms
+            )
         )
 
     # ==================================================================
@@ -1209,6 +2448,7 @@ class RAGEngine:
                 "lokasi",
                 "folder",
                 "ada dimana",
+
                 "ada di mana",
             ]
         )
@@ -1220,13 +2460,13 @@ class RAGEngine:
             for chunk in chunks:
 
                 path = (
-                        chunk.file_path
-                        or ""
+                    chunk.file_path
+                    or ""
                 ).strip()
 
                 if (
-                        path
-                        and path not in paths
+                    path
+                    and path not in paths
                 ):
 
                     paths.append(path)
@@ -1248,8 +2488,8 @@ class RAGEngine:
                         folder = ""
 
                     if (
-                            folder
-                            and folder not in folders
+                        folder
+                        and folder not in folders
                     ):
 
                         folders.append(
@@ -1286,8 +2526,8 @@ class RAGEngine:
         for chunk in chunks:
 
             key = (
-                    chunk.file_path
-                    or chunk.filename
+                chunk.file_path
+                or chunk.filename
             )
 
             if key in seen:
@@ -1322,13 +2562,8 @@ class RAGEngine:
     ) -> bool:
 
         metadata = (
-                result.metadata or {}
+            result.metadata or {}
         )
-
-        # --------------------------------------------------------------
-        # PRIORITAS 1
-        # Metadata tahun
-        # --------------------------------------------------------------
 
         metadata_year = str(
             metadata.get(
@@ -1340,13 +2575,8 @@ class RAGEngine:
         if metadata_year:
 
             return (
-                    metadata_year == year
+                metadata_year == year
             )
-
-        # --------------------------------------------------------------
-        # PRIORITAS 2
-        # Nama file
-        # --------------------------------------------------------------
 
         filename = cls._get_filename(
             metadata
@@ -1358,11 +2588,6 @@ class RAGEngine:
         ):
 
             return True
-
-        # --------------------------------------------------------------
-        # PRIORITAS 3
-        # Path file
-        # --------------------------------------------------------------
 
         file_path = str(
             metadata.get(
@@ -1377,18 +2602,6 @@ class RAGEngine:
         ):
 
             return True
-
-        # --------------------------------------------------------------
-        # JANGAN menggunakan isi content sebagai penentu tahun.
-        #
-        # Sebuah PDF tahun 2021 bisa saja menyebut:
-        # - tahun 2022
-        # - tahun 2024
-        # - tahun 2025
-        #
-        # sehingga content tidak boleh dijadikan bukti bahwa
-        # dokumen tersebut adalah dokumen tahun tersebut.
-        # --------------------------------------------------------------
 
         return False
 
@@ -1423,24 +2636,24 @@ class RAGEngine:
     ) -> str | None:
 
         if any(
-                phrase in question_lower
-                for phrase in [
-                    "spt",
-                    "surat pemberitahuan",
-                    "tanda terima spt",
-                    "masa pajak",
-                    "tahun pajak",
-                ]
+            phrase in question_lower
+            for phrase in [
+                "spt",
+                "surat pemberitahuan",
+                "tanda terima spt",
+                "masa pajak",
+                "tahun pajak",
+            ]
         ):
 
             return "spt"
 
         if any(
-                phrase in question_lower
-                for phrase in [
-                    "faktur pajak",
-                    "faktur",
-                ]
+            phrase in question_lower
+            for phrase in [
+                "faktur pajak",
+                "faktur",
+            ]
         ):
 
             return "faktur"
@@ -1450,6 +2663,777 @@ class RAGEngine:
             return "invoice"
 
         return None
+
+    # ==================================================================
+    # FINANCIAL QUESTION
+    # ==================================================================
+
+    @staticmethod
+    def _is_financial_question(
+            question_lower: str,
+    ) -> bool:
+
+        financial_terms = [
+            "pendapatan",
+            "pendapatan kotor",
+            "pendapatan bersih",
+            "omzet",
+            "peredaran usaha",
+            "laba",
+            "laba bersih",
+            "laba rugi",
+            "rugi",
+            "penjualan",
+            "keuntungan",
+            "biaya",
+            "beban",
+            "hpp",
+            "harga pokok penjualan",
+        ]
+
+        return any(
+            term in question_lower
+            for term in financial_terms
+        )
+
+    # ==================================================================
+    # ANNUAL FINANCIAL QUESTION
+    # ==================================================================
+
+    @staticmethod
+    def _is_annual_financial_question(
+            question_lower: str,
+            requested_year: str | None,
+    ) -> bool:
+
+        if not requested_year:
+
+            return False
+
+        annual_financial_terms = [
+            "pendapatan",
+            "pendapatan kotor",
+            "pendapatan bersih",
+            "omzet",
+            "laba",
+            "laba bersih",
+            "laba rugi",
+            "rugi",
+            "peredaran usaha",
+            "laporan keuangan",
+            "lapkeu",
+            "neraca",
+        ]
+
+        return any(
+            term in question_lower
+            for term in annual_financial_terms
+        )
+
+    # ==================================================================
+    # FINANCIAL ANSWER LABEL
+    # ==================================================================
+
+    @staticmethod
+    def _get_financial_answer_label(
+            question_lower: str,
+    ) -> str:
+
+        if "pendapatan bersih" in question_lower:
+
+            return "Pendapatan bersih perusahaan"
+
+        if "pendapatan kotor" in question_lower:
+
+            return "Pendapatan kotor perusahaan"
+
+        if "pendapatan" in question_lower:
+
+
+            return "Pendapatan perusahaan"
+
+        if "omzet" in question_lower:
+
+            return "Omzet perusahaan"
+
+        if "peredaran usaha" in question_lower:
+
+            return "Peredaran usaha perusahaan"
+
+        if "laba bersih" in question_lower:
+
+            return "Laba bersih perusahaan"
+
+        if "laba" in question_lower:
+
+            return "Laba perusahaan"
+
+        if "rugi" in question_lower:
+
+            return "Rugi perusahaan"
+
+        if "hpp" in question_lower:
+
+            return "HPP perusahaan"
+
+        return "Nilai keuangan perusahaan"
+
+    # ==================================================================
+    # EXTRACT ANNUAL FINANCIAL VALUE
+    # ==================================================================
+
+    @staticmethod
+    def _extract_annual_financial_value(
+            chunks: List[SourceChunk],
+            question_lower: str,
+    ) -> str | None:
+
+        if not chunks:
+            return None
+
+        # --------------------------------------------------------------
+        # Kumpulkan seluruh content
+        # --------------------------------------------------------------
+
+        texts = []
+
+        for chunk in chunks:
+
+            content = (
+                chunk.chunk_text or ""
+            ).strip()
+
+            if content:
+                texts.append(content)
+
+        if not texts:
+            return None
+
+        # ==============================================================
+        # HELPER NORMALISASI ANGKA
+        # ==============================================================
+
+        def normalize_number(
+                value: str,
+        ) -> str | None:
+
+            value = str(
+                value or ""
+            ).strip()
+
+            if not value:
+                return None
+
+            # Hilangkan prefix Rp
+            value = re.sub(
+                r"(?i)^rp\.?\s*",
+                "",
+                value,
+            ).strip()
+
+            # Jangan menerima tahun sebagai nilai
+            if re.fullmatch(
+                r"20\d{2}",
+                value,
+            ):
+                return None
+
+            # Harus memiliki digit
+            if not re.search(
+                r"\d",
+                value,
+            ):
+                return None
+
+            return value.rstrip(
+                ".,"
+            )
+
+        # ==============================================================
+        # DETEKSI JENIS PERTANYAAN
+        # ==============================================================
+
+        is_laba_bersih = (
+            "laba bersih"
+            in question_lower
+        )
+
+        is_pendapatan_bersih = (
+            "pendapatan bersih"
+            in question_lower
+        )
+
+        is_pendapatan_kotor = (
+            "pendapatan kotor"
+            in question_lower
+        )
+
+        is_pendapatan = (
+            "pendapatan"
+            in question_lower
+            and not is_pendapatan_bersih
+            and not is_pendapatan_kotor
+        )
+
+        is_peredaran = (
+            "peredaran usaha"
+            in question_lower
+            or "omzet"
+            in question_lower
+        )
+
+
+
+        # ==============================================================
+        # 1. LABA BERSIH
+        # ==============================================================
+        #
+        # Contoh data:
+        #
+        # Laba/Rugi Tahun Berjalan |
+        # Kolom 4: 51093215.45000005
+        #
+        # IMPORTANT:
+        # Kita harus melewati "Kolom 4:" dan mengambil angka setelahnya.
+        # ==============================================================
+
+        if is_laba_bersih:
+
+            patterns = [
+
+                # Laba/Rugi Tahun Berjalan | Kolom 4: VALUE
+                r"laba\s*/?\s*rugi\s+tahun\s+berjalan"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+
+                # Laba Tahun 2024 | Kolom X: VALUE
+                r"laba\s+tahun\s+20\d{2}"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+
+                # Laba Bersih | Kolom X: VALUE
+                r"laba\s+bersih"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+
+                # Pendapatan Bersih setelah Pajak | Kolom X: VALUE
+                r"pendapatan\s+bersih\s+setelah\s+pajak"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+
+                # Pendapatan Bersih | Kolom X: VALUE
+                r"pendapatan\s+bersih"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+            ]
+
+            for content in texts:
+
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
+
+                for pattern in patterns:
+
+                    match = re.search(
+                        pattern,
+                        normalized,
+                        flags=re.IGNORECASE,
+                    )
+
+                    if match:
+
+                        value = normalize_number(
+                            match.group(1)
+                        )
+
+                        if value:
+
+                            return value
+
+            # ----------------------------------------------------------
+            # Fallback Excel:
+            #
+            # Kolom 20: 51093215.45000002
+            # ----------------------------------------------------------
+
+            for content in texts:
+
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
+
+                matches = re.findall(
+                    r"kolom\s*20\s*:\s*"
+                    r"([\d][\d.,]*)",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+
+                for value in matches:
+
+                    value = normalize_number(
+                        value
+                    )
+
+                    if value:
+
+                        return value
+
+        # ==============================================================
+        # 2. PENDAPATAN BERSIH
+        # ==============================================================
+
+        if is_pendapatan_bersih:
+
+            patterns = [
+
+                r"pendapatan\s+bersih\s+setelah\s+pajak"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+
+                r"pendapatan\s+bersih"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+            ]
+
+            for content in texts:
+
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
+
+                for pattern in patterns:
+
+                    match = re.search(
+                        pattern,
+                        normalized,
+                        flags=re.IGNORECASE,
+                    )
+
+                    if match:
+
+                        value = normalize_number(
+                            match.group(1)
+                        )
+
+                        if value:
+
+                            return value
+
+            # Excel Kolom 20
+            for content in texts:
+
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
+
+                matches = re.findall(
+                    r"kolom\s*20\s*:\s*"
+                    r"([\d][\d.,]*)",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+
+                for value in matches:
+
+
+                    value = normalize_number(
+                        value
+                    )
+
+                    if value:
+
+                        return value
+
+        # ==============================================================
+        # 3. PENDAPATAN KOTOR
+        # ==============================================================
+
+        if is_pendapatan_kotor:
+
+            for content in texts:
+
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
+
+                match = re.search(
+                    r"pendapatan\s+kotor"
+                    r"\s*(?:\|\s*)?"
+                    r"kolom\s*\d+\s*:\s*"
+                    r"([\d][\d.,]*)",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+
+                if match:
+
+                    value = normalize_number(
+                        match.group(1)
+                    )
+
+                    if value:
+
+                        return value
+
+        # ==============================================================
+        # 4. PENDAPATAN
+        # ==============================================================
+
+        if is_pendapatan:
+
+            patterns = [
+
+                r"pendapatan\s+proyek"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+
+                r"pendapatan"
+                r"(?!\s+sebelum)"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+            ]
+
+            for content in texts:
+
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
+
+                for pattern in patterns:
+
+                    match = re.search(
+                        pattern,
+                        normalized,
+                        flags=re.IGNORECASE,
+                    )
+
+                    if match:
+
+                        value = normalize_number(
+                            match.group(1)
+                        )
+
+                        if value:
+
+                            return value
+
+        # ==============================================================
+        # 5. PEREDARAN USAHA / OMZET
+        # ==============================================================
+
+        if is_peredaran:
+
+            patterns = [
+
+                # Total Peredaran Usaha Tahun 2024 | Kolom 5: VALUE
+                r"total\s+peredaran\s+usaha"
+                r"(?:\s+tahun\s+20\d{2})?"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+
+                # Peredaran Usaha Tahun 2024 | Kolom 5: VALUE
+                r"peredaran\s+usaha"
+                r"(?:\s+tahun\s+20\d{2})?"
+                r"\s*(?:\|\s*)?"
+                r"kolom\s*\d+\s*:\s*"
+                r"([\d][\d.,]*)",
+            ]
+
+            for content in texts:
+
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
+
+                for pattern in patterns:
+
+                    match = re.search(
+                        pattern,
+                        normalized,
+                        flags=re.IGNORECASE,
+                    )
+
+                    if match:
+
+                        value = normalize_number(
+                            match.group(1)
+                        )
+
+                        if value:
+
+                            return value
+
+        # ==============================================================
+        # 6. FALLBACK UMUM
+        #
+        # Tidak boleh mengambil "Kolom 4", "Kolom 20", "Baris 19", dll.
+        # ==============================================================
+
+        label_patterns = []
+
+        if is_laba_bersih:
+
+            label_patterns = [
+                r"laba\s*/?\s*rugi\s+tahun\s+berjalan",
+                r"laba\s+tahun\s+20\d{2}",
+                r"laba\s+bersih",
+                r"pendapatan\s+bersih\s+setelah\s+pajak",
+                r"pendapatan\s+bersih",
+            ]
+
+        elif is_pendapatan_bersih:
+
+            label_patterns = [
+                r"pendapatan\s+bersih\s+setelah\s+pajak",
+                r"pendapatan\s+bersih",
+            ]
+
+        elif is_pendapatan_kotor:
+
+            label_patterns = [
+                r"pendapatan\s+kotor",
+            ]
+
+        elif is_pendapatan:
+
+            label_patterns = [
+                r"pendapatan\s+proyek",
+                r"pendapatan\s+kotor",
+            ]
+
+        elif is_peredaran:
+
+            label_patterns = [
+                r"total\s+peredaran\s+usaha",
+                r"peredaran\s+usaha",
+            ]
+
+        for content in texts:
+
+            normalized = re.sub(
+                r"\s+",
+                " ",
+                content,
+            )
+
+            for label_pattern in label_patterns:
+
+                match = re.search(
+                    label_pattern,
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+
+                if not match:
+                    continue
+
+                section = normalized[
+                    match.end():
+                    min(
+                        match.end() + 150,
+                        len(normalized),
+                    )
+                ]
+
+                # ------------------------------------------------------
+                # Cari angka tetapi lewati:
+                #
+                # Kolom 4
+                # Kolom 20
+                # Baris 19
+                # Tahun 2024
+                # ------------------------------------------------------
+
+                numbers = re.findall(
+                    r"(?<!\d)"
+                    r"(?!20\d{2}(?!\d))"
+                    r"\d{1,3}"
+                    r"(?:[.,]\d{3})*"
+                    r"(?:[.,]\d+)?"
+                    r"(?!\d)",
+                    section,
+                )
+
+                for number in numbers:
+
+                    # Jangan ambil nomor kolom/baris
+                    before = section[
+                        max(
+                            0,
+                            section.find(number) - 10,
+                        ):
+                        section.find(number)
+                    ].lower()
+
+                    if (
+                        "kolom" in before
+                        or "baris" in before
+                    ):
+                        continue
+
+                    value = normalize_number(
+                        number
+                    )
+
+                    if value:
+
+                        return value
+
+        return None
+
+
+    # ==================================================================
+    # FORMAT FINANCIAL VALUE
+    # ==================================================================
+
+    @staticmethod
+    def _format_financial_value(
+            value: str | None,
+    ) -> str:
+
+        value = str(
+            value or ""
+        ).strip()
+
+        if not value:
+            return ""
+
+        # Hilangkan prefix Rp
+        value = re.sub(
+            r"(?i)^rp\.?\s*",
+            "",
+            value,
+        ).strip()
+
+        # --------------------------------------------------------------
+        # Jika sudah format Indonesia:
+        #
+        # 56.000.000
+        # 1.248.761.500
+        # --------------------------------------------------------------
+
+        if (
+            value.count(".") >= 2
+            and all(
+                part.isdigit()
+                for part in value.split(".")
+            )
+            and all(
+                len(part) == 3
+                for part in value.split(".")[1:]
+            )
+        ):
+
+            return f"Rp {value}"
+
+        # --------------------------------------------------------------
+        # Normalisasi angka floating point:
+        #
+        # 51093215.45000005
+        # 490158531.30262494
+
+        # --------------------------------------------------------------
+
+        # Jika menggunakan koma sebagai desimal
+        if (
+            "," in value
+            and "." not in value
+        ):
+
+            value = value.replace(
+                ",",
+                ".",
+            )
+
+        try:
+
+            numeric_value = float(
+                value
+            )
+
+            # ----------------------------------------------------------
+            # Nilai bulat
+            # ----------------------------------------------------------
+
+            if numeric_value.is_integer():
+
+                grouped = (
+                    f"{int(numeric_value):,}"
+                    .replace(
+                        ",",
+                        ".",
+                    )
+                )
+
+                return f"Rp {grouped}"
+
+            # ----------------------------------------------------------
+            # Maksimal 2 angka desimal
+            # ----------------------------------------------------------
+
+            formatted = (
+                f"{numeric_value:,.2f}"
+            )
+
+            # Format US:
+            #
+            # 51,093,215.45
+            #
+            # menjadi:
+            #
+            # 51.093.215,45
+            # ----------------------------------------------------------
+
+            formatted = formatted.replace(
+                ",",
+                "X",
+            )
+
+            formatted = formatted.replace(
+                ".",
+                ",",
+            )
+
+            formatted = formatted.replace(
+                "X",
+                ".",
+            )
+
+            return f"Rp {formatted}"
+
+        except (
+                ValueError,
+                TypeError,
+        ):
+
+            return f"Rp {value}"
+
 
     # ==================================================================
     # SPT CONTENT QUESTION
@@ -1521,15 +3505,15 @@ class RAGEngine:
         ]
 
         return (
-                any(
-                    term in question_lower
-                    for term in numeric_terms
-                )
-                or
-                any(
-                    term in question_lower
-                    for term in table_terms
-                )
+            any(
+                term in question_lower
+                for term in numeric_terms
+            )
+            or
+            any(
+                term in question_lower
+                for term in table_terms
+            )
         )
 
     # ==================================================================
@@ -1546,23 +3530,23 @@ class RAGEngine:
             return False
 
         has_wp = (
-                "menurut wp" in question_lower
-                or
-                "menurut wajib pajak" in question_lower
-                or
-                "wp/spt" in question_lower
+            "menurut wp" in question_lower
+            or
+            "menurut wajib pajak" in question_lower
+            or
+            "wp/spt" in question_lower
         )
 
         has_pemeriksa = (
-                "menurut pemeriksa" in question_lower
-                or
-                "pemeriksa" in question_lower
+            "menurut pemeriksa" in question_lower
+            or
+            "pemeriksa" in question_lower
         )
 
         return (
-                has_wp
-                and
-                has_pemeriksa
+            has_wp
+            and
+            has_pemeriksa
         )
 
     # ==================================================================
@@ -1579,21 +3563,19 @@ class RAGEngine:
 
             return None
 
-        # --------------------------------------------------------------
-        # Gabungkan chunk
-        # --------------------------------------------------------------
-
         texts = []
 
         for chunk in chunks:
 
             content = (
-                    chunk.chunk_text or ""
+                chunk.chunk_text or ""
             ).strip()
 
             if content:
 
-                texts.append(content)
+                texts.append(
+                    content
+                )
 
         if not texts:
 
@@ -1602,10 +3584,6 @@ class RAGEngine:
         combined = "\n".join(
             texts
         )
-
-        # --------------------------------------------------------------
-        # Normalisasi spasi
-        # --------------------------------------------------------------
 
         normalized = re.sub(
             r"\s+",
@@ -1620,10 +3598,6 @@ class RAGEngine:
         keyword_lower = (
             keyword.lower()
         )
-
-        # --------------------------------------------------------------
-        # Cari keyword
-        # --------------------------------------------------------------
 
         search_position = 0
 
@@ -1640,14 +3614,10 @@ class RAGEngine:
 
                 break
 
-            # ----------------------------------------------------------
-            # Ambil area tabel setelah keyword
-            # ----------------------------------------------------------
-
             section_end = min(
                 position + 1200,
                 len(normalized),
-                )
+            )
 
             section = normalized[
                 position:
@@ -1658,21 +3628,16 @@ class RAGEngine:
                 section.lower()
             )
 
-            # ----------------------------------------------------------
-            # Pastikan area tersebut benar-benar merupakan
-            # tabel WP/SPT vs Pemeriksa.
-            # ----------------------------------------------------------
-
             has_wp_header = (
-                    "menurut wp/spt" in section_lower
-                    or
-                    "menurut wajib pajak" in section_lower
-                    or
-                    "menurut wp" in section_lower
+                "menurut wp/spt" in section_lower
+                or
+                "menurut wajib pajak" in section_lower
+                or
+                "menurut wp" in section_lower
             )
 
             has_pemeriksa_header = (
-                    "menurut pemeriksa" in section_lower
+                "menurut pemeriksa" in section_lower
             )
 
             if not (
@@ -1681,25 +3646,10 @@ class RAGEngine:
             ):
 
                 search_position = (
-                        position + len(keyword)
+                    position + len(keyword)
                 )
 
                 continue
-
-            # ----------------------------------------------------------
-            # Ambil angka Rupiah setelah keyword.
-            #
-            # Yang kita butuhkan:
-            #
-            # Peredaran Usaha
-            # Rp 67,580,133,333
-            # Rp 102,411,649,646
-            #
-            # BUKAN:
-            #
-            # Selisih
-            # Rp 34,831,516,313
-            # ----------------------------------------------------------
 
             values = re.findall(
                 r"Rp\s*([\d][\d.,]*)",
@@ -1709,12 +3659,9 @@ class RAGEngine:
 
             if len(values) >= 2:
 
+
                 wp_value = values[0]
                 pemeriksa_value = values[1]
-
-                # ------------------------------------------------------
-                # Validasi angka
-                # ------------------------------------------------------
 
                 if (
                         wp_value
@@ -1727,13 +3674,8 @@ class RAGEngine:
                     )
 
             search_position = (
-                    position + len(keyword)
+                position + len(keyword)
             )
-
-        # --------------------------------------------------------------
-        # Fallback:
-        # cari baris "Peredaran Usaha" secara lebih lokal.
-        # --------------------------------------------------------------
 
         lines = re.split(
             r"[\r\n]+",
@@ -1756,7 +3698,7 @@ class RAGEngine:
                     min(
                         index + 5,
                         len(lines),
-                        )
+                    )
                 ]
             )
 
@@ -1884,7 +3826,7 @@ class RAGEngine:
         ):
 
             metadata = (
-                    meta or {}
+                meta or {}
             )
 
             stored_filename = (
@@ -1894,10 +3836,10 @@ class RAGEngine:
             )
 
             if (
-                    self._normalize_filename(
-                        stored_filename
-                    )
-                    != target
+                self._normalize_filename(
+                    stored_filename
+                )
+                != target
             ):
 
                 continue
@@ -1941,6 +3883,748 @@ class RAGEngine:
 
         return output
 
+
+
+    # ==================================================================
+    # DETECT LOCATION CATEGORY
+    # ==================================================================
+
+    @staticmethod
+    def _detect_location_category(
+            question_lower: str,
+    ) -> str | None:
+
+        # --------------------------------------------------------------
+        # LAPORAN KEUANGAN
+        # --------------------------------------------------------------
+
+        if any(
+            term in question_lower
+            for term in [
+                "laporan keuangan",
+                "lapkeu",
+                "pendapatan perusahaan",
+                "neraca perusahaan",
+                "laba perusahaan",
+                "rugi perusahaan",
+            ]
+        ):
+
+            return "financial"
+
+        # --------------------------------------------------------------
+        # SPT
+        # --------------------------------------------------------------
+
+        if any(
+            term in question_lower
+            for term in [
+                "spt",
+                "surat pemberitahuan",
+            ]
+        ):
+
+            return "spt"
+
+        # --------------------------------------------------------------
+        # FAKTUR
+        # --------------------------------------------------------------
+
+        if any(
+            term in question_lower
+            for term in [
+                "faktur",
+                "faktur pajak",
+            ]
+        ):
+
+            return "faktur"
+
+        # --------------------------------------------------------------
+        # INVOICE
+        # --------------------------------------------------------------
+
+        if "invoice" in question_lower:
+
+            return "invoice"
+
+        return None
+
+    # ==================================================================
+    # FIND LOCATION DOCUMENTS
+    #
+    # Pencarian lokasi menggunakan metadata Chroma secara langsung.
+    # Tidak menggunakan embedding.
+    #
+    # Untuk laporan keuangan tahunan:
+    # jika folder "Laporan Keuangan\<tahun>" tersedia, hanya gunakan
+    # file dari folder tersebut.
+
+    # ==================================================================
+
+    def _find_location_documents(
+            self,
+            year: str | None,
+            category: str | None,
+    ) -> List[SearchResult]:
+
+        try:
+
+            collection = (
+                self.indexer.store.collection
+            )
+
+        except Exception:
+
+            return []
+
+        # --------------------------------------------------------------
+        # Ambil metadata + dokumen.
+        # --------------------------------------------------------------
+
+        try:
+
+            if year:
+
+                results = collection.get(
+                    where={
+                        "year": year,
+                    },
+                    include=[
+                        "documents",
+                        "metadatas",
+                    ],
+                )
+
+            else:
+
+                results = collection.get(
+                    include=[
+                        "documents",
+                        "metadatas",
+                    ],
+                )
+
+        except Exception:
+
+            return []
+
+        ids = results.get(
+            "ids",
+            [],
+        )
+
+        docs = results.get(
+            "documents",
+            [],
+        )
+
+        metas = results.get(
+            "metadatas",
+            [],
+        )
+
+        # --------------------------------------------------------------
+        # Kandidat hasil.
+        # --------------------------------------------------------------
+
+        candidates: List[
+            SearchResult
+        ] = []
+
+        for chunk_id, doc, meta in zip(
+                ids,
+                docs,
+                metas,
+        ):
+
+            metadata = (
+                meta or {}
+            )
+
+            filename = self._get_filename(
+                metadata
+            )
+
+            filename_lower = (
+                filename.lower()
+            )
+
+            file_path = str(
+                metadata.get(
+                    "file_path",
+                    "",
+                )
+            ).strip()
+
+            file_path_lower = (
+                file_path.lower()
+            )
+
+            content_lower = (
+                doc or ""
+            ).lower()
+
+            # ==========================================================
+            # YEAR
+            # ==========================================================
+
+            if year:
+
+                metadata_year = str(
+                    metadata.get(
+                        "year",
+                        "",
+                    )
+                ).strip()
+
+                if metadata_year != year:
+
+                    continue
+
+            # ==========================================================
+            # CATEGORY
+            # ==========================================================
+
+            if category == "financial":
+
+                financial_filename = any(
+                    term in filename_lower
+                    for term in [
+                        "lapkeu",
+                        "laporan keuangan",
+                        "pendapatan",
+                        "neraca",
+                        "rugi",
+                        "laba",
+                    ]
+                )
+
+                financial_path = (
+                    "laporan keuangan"
+                    in file_path_lower
+                )
+
+                financial_content = any(
+                    term in content_lower
+                    for term in [
+                        "laporan keuangan",
+                        "pendapatan proyek",
+                        "pendapatan kotor",
+                        "pendapatan bersih",
+                        "laba/rugi",
+                        "laba tahun",
+                        "neraca keuangan",
+                        "peredaran usaha",
+                    ]
+                )
+
+                if not (
+                    financial_filename
+                    or financial_path
+                    or financial_content
+                ):
+
+                    continue
+
+                # ------------------------------------------------------
+                # File transaksi bukan laporan keuangan.
+                # ------------------------------------------------------
+
+                is_transaction = any(
+                    term in filename_lower
+                    for term in [
+                        "faktur",
+                        "invoice",
+                        "e-billing",
+                        "ebilling",
+                        "billing",
+                        "bukti potong",
+                        "bpe",
+                        "tanda terima",
+                    ]
+                )
+
+                if (
+                    is_transaction
+                    and not financial_filename
+                    and not financial_path
+                ):
+
+                    continue
+
+            elif category == "spt":
+
+                is_spt = (
+                    self._is_spt_document(
+                        filename_lower,
+                        file_path_lower,
+                        content_lower,
+                    )
+                )
+
+                is_bpe = (
+                    self._is_bpe_document(
+                        filename_lower,
+                        file_path_lower,
+                        content_lower,
+                    )
+                )
+
+                if not is_spt or is_bpe:
+
+                    continue
+
+            elif category == "faktur":
+
+                if (
+                    "faktur"
+                    not in filename_lower
+                    and
+                    "faktur pajak"
+                    not in content_lower
+                ):
+
+                    continue
+
+            elif category == "invoice":
+
+                if "invoice" not in filename_lower:
+
+                    continue
+
+            # ----------------------------------------------------------
+            # Simpan kandidat.
+            # ----------------------------------------------------------
+
+            candidates.append(
+                SearchResult(
+                    chunk_id=chunk_id,
+                    document_id=metadata.get(
+                        "document_id",
+                        "",
+                    ),
+                    content=doc or "",
+                    score=1.0,
+                    metadata=metadata,
+                )
+            )
+
+        if not candidates:
+
+            return []
+
+        # ==============================================================
+        # PRIORITAS FOLDER LAPORAN KEUANGAN
+        # ==============================================================
+
+        if (
+            category == "financial"
+            and year
+        ):
+
+            preferred_marker = (
+                f"\\laporan keuangan\\{year}\\"
+            )
+
+            preferred_marker_alt = (
+                f"/laporan keuangan/{year}/"
+            )
+
+            preferred_candidates = []
+
+            for result in candidates:
+
+                metadata = (
+                    result.metadata or {}
+                )
+
+                path = str(
+                    metadata.get(
+                        "file_path",
+                        "",
+                    )
+                ).lower()
+
+                if (
+                    preferred_marker in path
+                    or
+                    preferred_marker_alt in path
+                ):
+
+                    preferred_candidates.append(
+                        result
+                    )
+
+            # ----------------------------------------------------------
+            # Jika folder utama tersedia, gunakan hanya folder utama.
+            # ----------------------------------------------------------
+
+
+            if preferred_candidates:
+
+                candidates = (
+                    preferred_candidates
+                )
+
+        # ==============================================================
+        # DEDUP BERDASARKAN PATH FILE
+        # ==============================================================
+
+        matched: List[
+            SearchResult
+        ] = []
+
+        seen_paths = set()
+
+        for result in candidates:
+
+            metadata = (
+                result.metadata or {}
+            )
+
+            filename = self._get_filename(
+                metadata
+            )
+
+            file_path = str(
+                metadata.get(
+                    "file_path",
+                    "",
+                )
+            ).strip()
+
+            normalized_path = (
+                file_path
+                .replace(
+                    "/",
+                    "\\",
+                )
+                .rstrip(
+                    "\\"
+                )
+                .lower()
+            )
+
+            source_key = (
+                normalized_path
+                or filename.lower()
+            )
+
+            if source_key in seen_paths:
+
+                continue
+
+            seen_paths.add(
+                source_key
+            )
+
+            matched.append(
+                result
+            )
+
+        # ==============================================================
+        # SORT
+        # ==============================================================
+
+        if category == "financial":
+
+            def financial_location_sort_key(
+                    result: SearchResult,
+            ) -> tuple:
+
+                metadata = (
+                    result.metadata or {}
+                )
+
+                filename = self._get_filename(
+                    metadata
+                ).lower()
+
+                file_path = str(
+                    metadata.get(
+                        "file_path",
+                        "",
+                    )
+                ).lower()
+
+                # ----------------------------------------------
+                # Prioritas jenis file
+                # ----------------------------------------------
+
+                if filename.startswith(
+                    "lapkeu"
+                ):
+
+                    filename_priority = 0
+
+                elif "laporan keuangan" in filename:
+
+                    filename_priority = 1
+
+                elif "neraca" in filename:
+
+                    filename_priority = 2
+
+                elif "pendapatan" in filename:
+
+                    filename_priority = 3
+
+                else:
+
+                    filename_priority = 4
+
+                return (
+                    filename_priority,
+                    filename,
+                    file_path,
+                )
+
+            matched.sort(
+                key=financial_location_sort_key
+            )
+
+        else:
+
+            matched.sort(
+                key=lambda result:
+                self._get_filename(
+                    result.metadata
+                ).lower()
+            )
+
+        return matched
+
+
+    # ==================================================================
+    # FIND PEREDARAN USAHA COMPARISON CHUNKS
+    #
+    # Digunakan khusus untuk pertanyaan:
+    #
+    # "Berapa peredaran usaha menurut WP dan menurut Pemeriksa?"
+    #
+    # Karena data pembanding biasanya berada di dokumen pemeriksaan/SPT,
+    # jangan bergantung pada vector similarity.
+    # ==================================================================
+
+    def _find_peredaran_comparison_chunks(
+            self,
+            year: str | None,
+    ) -> List[SearchResult]:
+
+        if not year:
+            return []
+
+        try:
+
+            collection = (
+                self.indexer.store.collection
+            )
+
+            results = collection.get(
+                where={
+                    "year": year,
+                },
+                include=[
+                    "documents",
+                    "metadatas",
+                ],
+            )
+
+        except Exception:
+
+            return []
+
+        ids = results.get(
+            "ids",
+            [],
+        )
+
+        docs = results.get(
+            "documents",
+            [],
+        )
+
+        metas = results.get(
+            "metadatas",
+            [],
+        )
+
+        matched = []
+
+        seen_chunks = set()
+
+        for chunk_id, doc, meta in zip(
+                ids,
+                docs,
+                metas,
+        ):
+
+            metadata = (
+                meta or {}
+            )
+
+            content = (
+                doc or ""
+            )
+
+            content_lower = (
+                content.lower()
+            )
+
+            filename = self._get_filename(
+                metadata
+            )
+
+            filename_lower = (
+                filename.lower()
+            )
+
+            # ----------------------------------------------------------
+            # Harus merupakan bagian dari pembahasan peredaran usaha
+            # ----------------------------------------------------------
+
+            has_peredaran = (
+                "peredaran usaha"
+                in content_lower
+            )
+
+            has_wp = (
+                "menurut wp/spt"
+                in content_lower
+                or
+                "menurut wajib pajak"
+                in content_lower
+                or
+                "menurut wp"
+                in content_lower
+            )
+
+            has_pemeriksa = (
+                "menurut pemeriksa"
+                in content_lower
+            )
+
+            # ----------------------------------------------------------
+            # Hindari chunk transaksi biasa.
+            # ----------------------------------------------------------
+
+            is_transaction = any(
+                term in filename_lower
+                for term in [
+                    "faktur",
+                    "invoice",
+                    "e-billing",
+                    "ebilling",
+                    "bpe",
+                    "bukti potong",
+                ]
+            )
+
+            if (
+                has_peredaran
+                and has_wp
+                and has_pemeriksa
+                and not is_transaction
+            ):
+
+                if chunk_id in seen_chunks:
+                    continue
+
+                seen_chunks.add(
+                    chunk_id
+                )
+
+                matched.append(
+                    SearchResult(
+                        chunk_id=chunk_id,
+                        document_id=metadata.get(
+                            "document_id",
+                            "",
+                        ),
+                        content=content,
+                        score=1.0,
+                        metadata=metadata,
+                    )
+                )
+
+        # --------------------------------------------------------------
+        # Jika tabel header dan nilai berada di chunk berdekatan,
+        # ambil juga chunk sekitar target.
+        # --------------------------------------------------------------
+
+        if not matched:
+            return []
+
+        # --------------------------------------------------------------
+        # Ambil seluruh chunk dari dokumen yang cocok agar nilai
+        # tidak terpisah dari header.
+        # --------------------------------------------------------------
+
+
+        document_ids = {
+            str(
+                result.metadata.get(
+                    "document_id",
+                    "",
+                )
+            )
+            for result in matched
+            if result.metadata.get(
+                "document_id",
+                "",
+            )
+        }
+
+        expanded = []
+
+        for chunk_id, doc, meta in zip(
+                ids,
+                docs,
+                metas,
+        ):
+
+            metadata = (
+                meta or {}
+            )
+
+            document_id = str(
+                metadata.get(
+                    "document_id",
+                    "",
+                )
+            )
+
+            if document_id not in document_ids:
+                continue
+
+            expanded.append(
+                SearchResult(
+                    chunk_id=chunk_id,
+                    document_id=document_id,
+                    content=doc or "",
+                    score=1.0,
+                    metadata=metadata,
+                )
+            )
+
+        expanded.sort(
+            key=lambda result: (
+                str(
+                    result.metadata.get(
+                        "document_id",
+                        "",
+                    )
+                ),
+                self._get_chunk_index(
+                    result
+                ),
+            )
+        )
+
+        return expanded
+
+
     # ==================================================================
     # BUILD LOCATION CONTEXT
     # ==================================================================
@@ -1958,33 +4642,47 @@ class RAGEngine:
 
         context_parts: List[str] = []
 
-        seen_documents = set()
+        seen_paths = set()
 
         for result in results:
 
             metadata = (
-                    result.metadata or {}
+                result.metadata or {}
             )
 
-            document_id = str(
+            file_path = str(
                 metadata.get(
-                    "document_id",
+                    "file_path",
                     "",
                 )
+            ).strip()
+
+            filename = self._get_filename(
+                metadata
             )
 
-            if (
-                    document_id
-                    and document_id in seen_documents
-            ):
+            source_key = (
+                file_path
+                .replace(
+                    "/",
+                    "\\",
+                )
+                .rstrip(
+                    "\\",
+                )
+                .lower()
+                if file_path
+                else filename.lower()
+            )
+
+            if source_key in seen_paths:
 
                 continue
 
-            if document_id:
+            seen_paths.add(
+                source_key
+            )
 
-                seen_documents.add(
-                    document_id
-                )
 
             filename = self._get_filename(
                 metadata
@@ -2005,8 +4703,8 @@ class RAGEngine:
                 SourceChunk(
                     filename=filename,
                     chunk_text=(
-                            result.content
-                            or ""
+                        result.content
+                        or ""
                     ),
                     score=float(
                         result.score
@@ -2035,11 +4733,11 @@ class RAGEngine:
             return [], ""
 
         context = (
-                "INFORMASI LOKASI "
-                "DOKUMEN YANG DITEMUKAN:\n\n"
-                + "\n\n".join(
-            context_parts
-        )
+            "INFORMASI LOKASI "
+            "DOKUMEN YANG DITEMUKAN:\n\n"
+            + "\n\n".join(
+                context_parts
+            )
         )
 
         return (
@@ -2064,6 +4762,12 @@ class RAGEngine:
             SearchResult
         ] = []
 
+        # --------------------------------------------------------------
+        # PILIH CHUNK
+        #
+        # Semua chunk yang relevan tetap boleh masuk context.
+        # --------------------------------------------------------------
+
         for result in results:
 
             if self._is_duplicate_chunk(
@@ -2084,16 +4788,40 @@ class RAGEngine:
 
                 break
 
+        # --------------------------------------------------------------
+        # BUILD SOURCE + CONTEXT
+        # --------------------------------------------------------------
+
         source_chunks: List[
             SourceChunk
         ] = []
 
         context_parts: List[str] = []
 
+        # --------------------------------------------------------------
+        # Source display menggunakan file_path.
+        #
+        # Jadi:
+        #
+        # chunk 1 -> file A
+        # chunk 2 -> file A
+        #
+        # tetap menghasilkan:
+        #
+        # [1] file A
+        #
+        # bukan:
+        #
+        # [1] file A
+        # [2] file A
+        # --------------------------------------------------------------
+
+        seen_source_paths = set()
+
         for result in selected_results:
 
             metadata = (
-                    result.metadata or {}
+                result.metadata or {}
             )
 
             filename = self._get_filename(
@@ -2105,34 +4833,76 @@ class RAGEngine:
                     "file_path",
                     "",
                 )
-            )
+            ).strip()
+
+            document_id = str(
+                metadata.get(
+                    "document_id",
+                    "",
+                )
+            ).strip()
+
+            year = str(
+                metadata.get(
+                    "year",
+                    "",
+                )
+            ).strip()
 
             if not filename:
-
                 filename = "unknown"
+
+            # ==========================================================
+            # CONTEXT
+            #
+            # Semua chunk tetap dikirim ke LLM.
+            # ==========================================================
+
+            context_parts.append(
+                f"[Source: {filename}]\n"
+                f"[File Path: {file_path}]\n"
+                f"[Document ID: {document_id}]\n"
+
+                f"[Tahun: {year}]\n"
+                f"{result.content or ''}"
+            )
+
+            # ==========================================================
+            # SOURCE DISPLAY
+            #
+            # Gunakan path sebagai identitas utama.
+            # ==========================================================
+
+            source_key = (
+                file_path.replace(
+                    "/",
+                    "\\",
+                ).rstrip(
+                    "\\"
+                ).lower()
+                if file_path
+                else filename.lower()
+            )
+
+            if source_key in seen_source_paths:
+
+                continue
+
+            seen_source_paths.add(
+                source_key
+            )
 
             source_chunks.append(
                 SourceChunk(
                     filename=filename,
                     chunk_text=(
-                            result.content
-                            or ""
+                        result.content or ""
                     ),
                     score=float(
                         result.score
                     ),
                     file_path=file_path,
                 )
-            )
-
-            context_parts.append(
-                f"[Source: {filename}]\n"
-                f"[File Path: {file_path}]\n"
-                f"[Document ID: "
-                f"{metadata.get('document_id', '')}]\n"
-                f"[Tahun: "
-                f"{metadata.get('year', '')}]\n"
-                f"{result.content or ''}"
             )
 
         context = "\n\n".join(
@@ -2222,7 +4992,7 @@ class RAGEngine:
     ) -> bool:
 
         current = (
-                result.content or ""
+            result.content or ""
         ).strip().lower()
 
         if not current:
@@ -2232,7 +5002,7 @@ class RAGEngine:
         for existing in selected:
 
             previous = (
-                    existing.content or ""
+                existing.content or ""
             ).strip().lower()
 
             if not previous:
@@ -2269,10 +5039,6 @@ class RAGEngine:
             content_lower: str,
     ) -> bool:
 
-        # --------------------------------------------------------------
-        # Nama file / path
-        # --------------------------------------------------------------
-
         if "spt" in filename_lower:
 
             return True
@@ -2288,10 +5054,6 @@ class RAGEngine:
         if "spt 202" in file_path_lower:
 
             return True
-
-        # --------------------------------------------------------------
-        # Struktur khas SPT
-        # --------------------------------------------------------------
 
         spt_indicators = [
             "surat pemberitahuan masa pajak pertambahan nilai",
@@ -2401,6 +5163,7 @@ class RAGEngine:
         words = re.findall(
             r"[a-zA-Z0-9]+",
             question_lower,
+
         )
 
         terms = []
@@ -2448,7 +5211,7 @@ class RAGEngine:
         for result in results:
 
             content = (
-                    result.content or ""
+                result.content or ""
             )
 
             content_lower = (
@@ -2457,17 +5220,9 @@ class RAGEngine:
 
             score = 0.0
 
-            # ----------------------------------------------------------
-            # Score awal
-            # ----------------------------------------------------------
-
             score += float(
                 result.score
             )
-
-            # ----------------------------------------------------------
-            # Kata penting
-            # ----------------------------------------------------------
 
             matched_terms = sum(
                 1
@@ -2478,11 +5233,7 @@ class RAGEngine:
             score += min(
                 matched_terms * 0.15,
                 1.00,
-                )
-
-            # ----------------------------------------------------------
-            # Angka
-            # ----------------------------------------------------------
+            )
 
             if is_numeric:
 
@@ -2504,10 +5255,6 @@ class RAGEngine:
                 if "rp" in content_lower:
 
                     score += 0.10
-
-            # ----------------------------------------------------------
-            # Istilah tabel
-            # ----------------------------------------------------------
 
             important_terms = [
                 "dilaporkan",
@@ -2546,9 +5293,184 @@ class RAGEngine:
             for _, result in ranked
         ]
 
+
     # ==================================================================
-    # EXPAND TABLE CHUNKS
+    # GET FINANCIAL DOCUMENT CHUNKS
+    #
+    # Untuk pertanyaan finansial tahunan, retrieval vector biasa tidak
+    # cukup karena chunk yang memuat label dan angka bisa terpencar.
+    #
+    # Fungsi ini mengambil seluruh chunk dari dokumen finansial yang
+    # sesuai dengan tahun pertanyaan.
     # ==================================================================
+
+    def _get_financial_document_chunks(
+            self,
+            year: str,
+    ) -> List[SearchResult]:
+
+        if not year:
+            return []
+
+        try:
+
+            collection = (
+                self.indexer.store.collection
+            )
+
+            results = collection.get(
+                where={
+                    "year": year,
+                },
+                include=[
+                    "documents",
+                    "metadatas",
+                ],
+            )
+
+        except Exception:
+
+            return []
+
+        ids = results.get(
+            "ids",
+            [],
+        )
+
+        docs = results.get(
+            "documents",
+            [],
+        )
+
+        metas = results.get(
+            "metadatas",
+            [],
+        )
+
+        output: List[SearchResult] = []
+
+        financial_filename_terms = [
+            "pendapatan",
+            "lapkeu",
+            "laporan keuangan",
+            "neraca",
+            "rugi",
+            "laba",
+        ]
+
+        transaction_filename_terms = [
+            "faktur",
+            "invoice",
+            "e-billing",
+            "ebilling",
+            "billing",
+            "bukti potong",
+            "bpe",
+            "tanda terima",
+        ]
+
+        for (
+                chunk_id,
+                doc,
+                meta,
+        ) in zip(
+            ids,
+            docs,
+            metas,
+        ):
+
+            metadata = (
+                meta or {}
+            )
+
+            filename = self._get_filename(
+                metadata
+            )
+
+            filename_lower = (
+                filename.lower()
+            )
+
+            content_lower = (
+                doc or ""
+            ).lower()
+
+            financial_filename_match = any(
+                term in filename_lower
+                for term in financial_filename_terms
+            )
+
+            transaction_filename_match = any(
+                term in filename_lower
+                for term in transaction_filename_terms
+            )
+
+            financial_content_match = any(
+                term in content_lower
+                for term in [
+                    "pendapatan proyek",
+                    "pendapatan kotor",
+                    "pendapatan bersih",
+                    "pendapatan bersih setelah pajak",
+                    "laba bersih",
+                    "laba tahun",
+                    "laba/rugi tahun berjalan",
+                    "peredaran usaha",
+                    "total peredaran usaha",
+                    "laporan keuangan",
+                    "biaya pokok penjualan",
+                ]
+            )
+
+            is_financial_document = (
+                financial_filename_match
+                or financial_content_match
+            )
+
+            is_transaction_document = (
+                transaction_filename_match
+                and not financial_filename_match
+            )
+
+            if (
+                is_financial_document
+                and not is_transaction_document
+            ):
+
+                output.append(
+                    SearchResult(
+                        chunk_id=chunk_id,
+                        document_id=metadata.get(
+                            "document_id",
+                            "",
+                        ),
+                        content=doc or "",
+                        score=1.0,
+                        metadata=metadata,
+                    )
+                )
+
+        # --------------------------------------------------------------
+        # Urutkan berdasarkan document + chunk index
+        # --------------------------------------------------------------
+
+        output.sort(
+            key=lambda result: (
+                str(
+                    result.metadata.get(
+                        "filename",
+                        "",
+                    )
+                ).lower(),
+                self._get_chunk_index(
+                    result
+
+                ),
+            )
+        )
+
+        return output
+
 
     def _expand_table_chunks(
             self,
@@ -2562,19 +5484,11 @@ class RAGEngine:
 
             return []
 
-        # --------------------------------------------------------------
-        # Susun berdasarkan posisi chunk asli
-        # --------------------------------------------------------------
-
         sorted_results = sorted(
             all_results,
             key=lambda result:
             self._get_chunk_index(result),
         )
-
-        # --------------------------------------------------------------
-        # Tentukan kata kunci tabel
-        # --------------------------------------------------------------
 
         table_terms = []
 
@@ -2585,11 +5499,11 @@ class RAGEngine:
             ])
 
         if (
-                "menurut wp" in question_lower
-                or
-                "menurut wajib pajak" in question_lower
-                or
-                "menurut wp/spt" in question_lower
+            "menurut wp" in question_lower
+            or
+            "menurut wajib pajak" in question_lower
+            or
+            "menurut wp/spt" in question_lower
         ):
 
             table_terms.extend([
@@ -2609,16 +5523,12 @@ class RAGEngine:
             "keterangan dan/atau pembahasan",
         ])
 
-        # --------------------------------------------------------------
-        # Cari chunk target
-        # --------------------------------------------------------------
-
         target_indexes = set()
 
         for result in sorted_results:
 
             content_lower = (
-                    result.content or ""
+                result.content or ""
             ).lower()
 
             matched = any(
@@ -2633,11 +5543,6 @@ class RAGEngine:
                         result
                     )
                 )
-
-        # --------------------------------------------------------------
-        # Kalau tidak menemukan target,
-        # gunakan beberapa hasil reranking terbaik
-        # --------------------------------------------------------------
 
         if not target_indexes:
 
@@ -2660,10 +5565,6 @@ class RAGEngine:
 
             return selected
 
-        # --------------------------------------------------------------
-        # Ambil chunk di sekitar target
-        # --------------------------------------------------------------
-
         expanded_indexes = set()
 
         for target_index in target_indexes:
@@ -2676,10 +5577,6 @@ class RAGEngine:
                 expanded_indexes.add(
                     target_index + offset
                 )
-
-        # --------------------------------------------------------------
-        # Bentuk hasil berdasarkan urutan asli
-        # --------------------------------------------------------------
 
         expanded_results = []
 
@@ -2696,8 +5593,8 @@ class RAGEngine:
                 continue
 
             if self._is_duplicate_chunk(
-                    result,
-                    expanded_results,
+                result,
+                expanded_results,
             ):
 
                 continue
@@ -2706,15 +5603,11 @@ class RAGEngine:
                 result
             )
 
-        # --------------------------------------------------------------
-        # Jika hasil terlalu banyak, batasi
-        # --------------------------------------------------------------
-
         max_expanded_chunks = 10
 
         if (
-                len(expanded_results)
-                > max_expanded_chunks
+            len(expanded_results)
+            > max_expanded_chunks
         ):
 
             priority = []
@@ -2723,12 +5616,12 @@ class RAGEngine:
             for result in expanded_results:
 
                 content_lower = (
-                        result.content or ""
+                    result.content or ""
                 ).lower()
 
                 if any(
-                        term in content_lower
-                        for term in table_terms
+                    term in content_lower
+                    for term in table_terms
                 ):
 
                     priority.append(
@@ -2742,13 +5635,9 @@ class RAGEngine:
                     )
 
             expanded_results = (
-                    priority
-                    + normal
+                priority
+                + normal
             )[:max_expanded_chunks]
-
-            # ----------------------------------------------------------
-            # Kembalikan berdasarkan urutan chunk
-            # ----------------------------------------------------------
 
             expanded_results.sort(
                 key=lambda result:
@@ -2769,7 +5658,7 @@ class RAGEngine:
     ) -> int:
 
         metadata = (
-                result.metadata or {}
+            result.metadata or {}
         )
 
         try:
@@ -2782,8 +5671,8 @@ class RAGEngine:
             )
 
         except (
-                ValueError,
-                TypeError,
+            ValueError,
+            TypeError,
         ):
 
             return 0
