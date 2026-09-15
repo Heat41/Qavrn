@@ -110,8 +110,8 @@ class TestRAGDocumentRouting(unittest.TestCase):
                     "year": "2024",
                     "filename": "Neraca dan RL PT AEP 2024.xls",
                     "file_path": (
-                        r"C:\PT.AEP\Laporan Keuangan\2024\"
-                        r"Neraca dan RL PT AEP 2024.xls"
+                        "C:\\PT.AEP\\Laporan Keuangan\\2024\\"
+                        "Neraca dan RL PT AEP 2024.xls"
                     ),
                 },
                 {
@@ -123,8 +123,8 @@ class TestRAGDocumentRouting(unittest.TestCase):
                     "year": "2025",
                     "filename": "Neraca dan RL PT AEP 2025.xls",
                     "file_path": (
-                        r"C:\PT.AEP\Laporan Keuangan\2025\"
-                        r"Neraca dan RL PT AEP 2025.xls"
+                        "C:\\PT.AEP\\Laporan Keuangan\\2025\\"
+                        "Neraca dan RL PT AEP 2025.xls"
                     ),
                 },
             ],
