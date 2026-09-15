@@ -3758,10 +3758,12 @@ class RAGEngine:
         if not value:
             return ""
 
-        # OCR sering membaca "Jl." sebagai "Ji.".
+        # OCR sering membaca "Jl." sebagai "Ji.". Normalisasi
+        # seluruh prefix berikut menjadi bentuk tampilan yang sama:
+        # Ji. / Ji / Jl. / Jl / Jalan -> Jl.
         value = re.sub(
-            r"(?i)^ji\.?\b",
-            "Jl.",
+            r"(?i)^(?:ji|jl|jalan)\.?\s*",
+            "Jl. ",
             value,
         )
 
@@ -3792,6 +3794,16 @@ class RAGEngine:
         ).strip(" ,;|.")
 
         value = re.sub(
+            r"\.{2,}",
+            ".",
+            value,
+        )
+        value = re.sub(
+            r",{2,}",
+            ",",
+            value,
+        )
+        value = re.sub(
             r"\s*,\s*",
             ", ",
             value,
@@ -3802,7 +3814,7 @@ class RAGEngine:
             value,
         )
 
-        return value
+        return value.strip(" ,;|")
 
     @staticmethod
     def _company_address_key(
