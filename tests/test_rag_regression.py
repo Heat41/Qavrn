@@ -203,9 +203,13 @@ class TestRAGRegression(unittest.TestCase):
             chunks,
         )
 
+        expected_folder = (
+            "C:\\Users\\ASUS260922\\Documents\\PT.AEP\\"
+            "Laporan Keuangan\\2024"
+        )
+
         self.assertIn(
-            r"C:\Users\ASUS260922\Documents\PT.AEP\"
-            r"Laporan Keuangan\2024",
+            expected_folder,
             answer,
         )
         self.assertNotIn("SPT 2024", answer)
