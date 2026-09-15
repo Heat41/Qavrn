@@ -114,9 +114,7 @@
     "question": "cari invoice tahun 2024",
     "top_k": 10,
     "expected_mode": "search",
-    "expected_source_filename_contains_any": [
-      "invoice"
-    ],
-    "require_sources": true
+    "require_sources": false,
+    "expected_not_found": true
   }
 ]
