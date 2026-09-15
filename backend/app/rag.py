@@ -135,7 +135,93 @@ class RAGEngine:
             self._extract_year(question)
         )
 
+        # ==============================================================
+        # DETERMINISTIC COMPANY ADDRESS
+        # ==============================================================
 
+        if self._is_address_question(question_lower):
+
+            candidates = self._extract_company_address_candidates(
+                question_lower,
+                requested_year,
+            )
+
+            if candidates:
+
+                requested_document_type = self._detect_document_type(
+            question_lower
+        )
+
+        if requested_document_type:
+            filtered_candidates = [
+                candidate
+                for candidate in candidates
+                if candidate[1] == requested_document_type
+            ]
+
+            if filtered_candidates:
+                candidates = filtered_candidates
+
+        unique_candidates = {}
+
+        for address, document_type, source in candidates:
+            normalized_address = re.sub(
+                r"\s+",
+                " ",
+                address.lower(),
+            ).strip(" ,.")
+
+            if normalized_address not in unique_candidates:
+                unique_candidates[normalized_address] = (
+                    address,
+                    document_type,
+                    source,
+                )
+
+        candidate_values = list(
+            unique_candidates.values()
+        )
+
+        if len(candidate_values) == 1:
+
+            address = candidate_values[0][0]
+
+            answer = (
+                f"Alamat perusahaan"
+                f"{f' tahun {requested_year}' if requested_year else ''}"
+                f" adalah {address}."
+            )
+
+        else:
+
+            answer_lines = [
+                (
+                    f"Ditemukan {len(candidate_values)} "
+                    "alamat berbeda"
+                    f"{f' pada tahun {requested_year}' if requested_year else ''}:"
+                )
+            ]
+
+            for address, document_type, _ in candidate_values:
+                answer_lines.append(
+                    f"- {document_type}: {address}"
+                )
+
+            answer_lines.append(
+                "Silakan tentukan sumber dokumen yang dimaksud."
+            )
+
+            answer = "\n".join(answer_lines)
+
+        def address_stream() -> Iterator[str]:
+            yield answer
+
+        address_sources = [
+            candidate[2]
+            for candidate in candidate_values
+        ]
+
+        return address_stream(), address_sources
         # ==============================================================
         # DETERMINISTIC DIRECTOR
         # ==============================================================
@@ -448,6 +534,92 @@ class RAGEngine:
         # ==============================================================
         # DETERMINISTIC ANNUAL FINANCIAL VALUE
         # ==============================================================
+
+        # Jawaban alamat perusahaan secara deterministik.
+
+        if self._is_address_question(question_lower):
+
+            candidates = self._extract_company_address_candidates(
+                question_lower,
+                requested_year,
+            )
+
+            if candidates:
+
+                requested_document_type = self._detect_document_type(
+                    question_lower
+                )
+
+                if requested_document_type:
+                    filtered_candidates = [
+                        candidate
+                        for candidate in candidates
+                        if candidate[1] == requested_document_type
+                    ]
+
+                    if filtered_candidates:
+                        candidates = filtered_candidates
+
+                unique_candidates = {}
+
+                for address, document_type, source in candidates:
+                    normalized_address = re.sub(
+                        r"\s+",
+                        " ",
+                        address.lower(),
+                    ).strip(" ,.")
+
+                    if normalized_address not in unique_candidates:
+                        unique_candidates[normalized_address] = (
+                            address,
+                            document_type,
+                            source,
+                        )
+
+                candidate_values = list(
+                    unique_candidates.values()
+                )
+
+                if len(candidate_values) == 1:
+
+                    address = candidate_values[0][0]
+
+                    answer = (
+                        f"Alamat perusahaan"
+                        f"{f' tahun {requested_year}' if requested_year else ''}"
+                        f" adalah {address}."
+                    )
+
+                else:
+
+                    answer_lines = [
+                        (
+                            f"Ditemukan {len(candidate_values)} "
+                            "alamat berbeda"
+                            f"{f' pada tahun {requested_year}' if requested_year else ''}:"
+                        )
+                    ]
+
+                    for address, document_type, _ in candidate_values:
+                        answer_lines.append(
+                            f"- {document_type}: {address}"
+                        )
+
+                    answer_lines.append(
+                        "Silakan tentukan sumber dokumen yang dimaksud."
+                    )
+
+                    answer = "\n".join(answer_lines)
+
+                def address_stream() -> Iterator[str]:
+                    yield answer
+
+                address_sources = [
+                    candidate[2]
+                    for candidate in candidate_values
+                ]
+
+                return address_stream(), address_sources
 
         if self._is_annual_financial_question(
                 question_lower,
@@ -2383,6 +2555,45 @@ class RAGEngine:
             question.lower().strip()
         )
 
+        # Pertanyaan alamat bukan search-only.
+        # Harus diteruskan ke deterministic address extraction.
+        if RAGEngine._is_address_question(question_lower):
+            return False
+
+        location_terms = [
+            "dimana",
+            "di mana",
+            "terletak",
+            "letaknya",
+            "lokasi",
+            "folder",
+            "ada dimana",
+            "ada di mana",
+        ]
+
+        file_search_terms = [
+            "carikan file",
+            "cari file",
+            "temukan file",
+            "tampilkan file",
+            "carikan dokumen",
+            "cari dokumen",
+            "temukan dokumen",
+            "tampilkan dokumen",
+        ]
+
+        return (
+            any(
+                term in question_lower
+                for term in location_terms
+            )
+            or
+            any(
+                term in question_lower
+                for term in file_search_terms
+            )
+        )
+
         location_terms = [
             "dimana",
             "di mana",
@@ -2634,6 +2845,19 @@ class RAGEngine:
     def _detect_document_type(
             question_lower: str,
     ) -> str | None:
+
+        if any(
+            phrase in question_lower
+            for phrase in [
+                "laporan keuangan",
+                "lapkeu",
+                "laporan laba rugi",
+                "neraca",
+                "laporan pendapatan",
+            ]
+        ):
+
+            return "financial"
 
         if any(
             phrase in question_lower
@@ -3717,9 +3941,410 @@ class RAGEngine:
 
         return None
 
+    
     # ==================================================================
-    # LOCATION QUESTION
+    # ALAMAT PERUSAHAAN
     # ==================================================================
+
+    @staticmethod
+    def _is_address_question(question_lower: str) -> bool:
+        address_terms = [
+            "alamat",
+            "alamat perusahaan",
+            "alamat pt",
+            "kantor pt",
+            "kantor perusahaan",
+        ]
+
+        return any(
+            term in question_lower
+            for term in address_terms
+        )
+
+    def _extract_company_address(
+        self,
+        question_lower: str,
+        requested_year: str | None = None,
+    ) -> tuple[str, SourceChunk] | None:
+
+        try:
+            results = self.indexer.store.collection.get(
+                include=[
+                    "documents",
+                    "metadatas",
+                ]
+            )
+
+        except Exception:
+            return None
+
+        documents = (
+            results.get("documents", [])
+            or []
+        )
+
+        metadatas = (
+            results.get("metadatas", [])
+            or []
+        )
+
+        # ==========================================================
+        # OBJECT / COMPANY DARI PERTANYAAN
+        # ==========================================================
+
+        object_match = re.search(
+            r"\b(?:pt|cv|firma|koperasi|yayasan)"
+            r"\s+[a-z0-9][a-z0-9 .,&'-]{2,}",
+            question_lower,
+            flags=re.IGNORECASE,
+        )
+
+        object_terms = []
+
+        if object_match:
+
+            object_text = (
+                object_match.group(0)
+                .strip()
+            )
+
+            # Potong bagian setelah tahun / sumber dokumen.
+            object_text = re.split(
+                r"\b(?:tahun|menurut|berdasarkan|pada|dalam)\b",
+                object_text,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip()
+
+            object_terms = [
+                term
+                for term in re.findall(
+                    r"[a-z0-9]+",
+                    object_text.lower(),
+                )
+                if len(term) >= 3
+            ]
+
+        # Kalau object tidak berhasil dideteksi,
+        # jangan mengambil alamat secara sembarang.
+        if not object_terms:
+            return None
+
+        requested_document_type = (
+            self._detect_document_type(
+                question_lower
+            )
+        )
+
+        candidates = []
+
+        # ==========================================================
+        # CARI SEMUA KANDIDAT
+        # ==========================================================
+
+        for content, metadata in zip(
+            documents,
+            metadatas,
+        ):
+
+            content = content or ""
+            metadata = metadata or {}
+
+            if not content:
+                continue
+
+            content_lower = content.lower()
+
+            # ------------------------------------------------------
+            # OBJECT HARUS ADA DI CHUNK
+            # ------------------------------------------------------
+
+            matched_object_terms = sum(
+                1
+                for term in object_terms
+                if term in content_lower
+            )
+
+            if matched_object_terms < len(
+                object_terms
+            ):
+
+                continue
+
+            # ------------------------------------------------------
+            # HARUS ADA ALAMAT
+            # ------------------------------------------------------
+
+            if "alamat" not in content_lower:
+                continue
+
+            # ------------------------------------------------------
+            # FILTER TAHUN
+            # ------------------------------------------------------
+
+            metadata_year = str(
+                metadata.get(
+                    "year",
+                    "",
+                )
+            ).strip()
+
+            if requested_year:
+
+                if metadata_year != requested_year:
+                    continue
+
+            # ------------------------------------------------------
+            # CARI POLA ALAMAT
+            # ------------------------------------------------------
+
+            match = re.search(
+                r"alamat\s*:\s*(.*?)(?="
+                r"\s+npwp\s*:"
+                r"|\s+nama\s*:"
+                r"|\s+daftar\s+peredaran\s+usaha\b"
+                r"|\s+baris\s+\d+\s*:"
+                r"|\s+kolom\s+\d+\s*:"
+                r"|\s+\d+\s*\|"
+                r"|$"
+                r")",
+                content,
+                flags=re.IGNORECASE,
+            )
+
+            if not match:
+                continue
+
+            address = (
+                match.group(1)
+                .strip()
+            )
+
+            if not address:
+                continue
+
+            # Bersihkan artefak hasil parser tabel.
+            address = re.sub(
+                r"\s+Baris\s+\d+\s*:.*$",
+                "",
+                address,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            address = re.sub(
+                r"\s+Kolom\s+\d+\s*:.*$",
+                "",
+                address,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            if not address:
+                continue
+
+            # ------------------------------------------------------
+            # IDENTITAS FILE
+            # ------------------------------------------------------
+
+            filename = str(
+                metadata.get(
+                    "filename",
+                    "",
+                )
+            ).strip()
+
+            file_path = str(
+                metadata.get(
+                    "file_path",
+                    "",
+                )
+            ).strip()
+
+            filename_lower = (
+                filename.lower()
+            )
+
+            file_path_lower = (
+                file_path.lower()
+            )
+
+            # ------------------------------------------------------
+            # DETEKSI JENIS DOKUMEN
+            # ------------------------------------------------------
+
+            if self._is_spt_document(
+                filename_lower,
+                file_path_lower,
+                content_lower,
+            ):
+
+                document_type = "spt"
+
+            elif self._is_bpe_document(
+                filename_lower,
+                file_path_lower,
+                content_lower,
+            ):
+
+                document_type = "bpe"
+
+            elif (
+                "faktur" in filename_lower
+                or "faktur pajak" in content_lower
+            ):
+
+                document_type = "faktur"
+
+            elif "invoice" in filename_lower:
+
+                document_type = "invoice"
+
+            elif any(
+                term in (
+                    filename_lower
+                    + " "
+                    + file_path_lower
+                )
+                for term in [
+                    "lapkeu",
+                    "laporan keuangan",
+                    "neraca",
+                    "laba rugi",
+                ]
+            ):
+
+                document_type = "financial"
+
+            elif self._is_non_spt_document(
+                filename_lower,
+                file_path_lower,
+                content_lower,
+            ):
+
+                document_type = "other"
+
+            else:
+
+                document_type = "other"
+
+            # ======================================================
+            # RANKING
+            # ======================================================
+
+            score = 0.0
+
+            # Object cocok penuh.
+            score += (
+                matched_object_terms
+                / len(object_terms)
+            ) * 4.0
+
+            # Label alamat ditemukan.
+            score += 2.0
+
+            # Tahun sudah difilter di atas.
+            if requested_year:
+                score += 2.0
+
+            # ------------------------------------------------------
+            # PREFERENSI JENIS DOKUMEN
+            #
+            # HANYA diberi bonus jika user memang menyebutkan
+            # jenis dokumen.
+            # ------------------------------------------------------
+
+            if requested_document_type:
+
+                if (
+                    document_type
+                    == requested_document_type
+                ):
+
+                    score += 5.0
+
+                else:
+
+                    score -= 2.0
+
+            # ------------------------------------------------------
+            # KUALITAS KONTEKS
+            # ------------------------------------------------------
+
+            if re.search(
+                r"nama\s*:",
+                content,
+                flags=re.IGNORECASE,
+            ):
+
+                score += 0.5
+
+            if re.search(
+                r"npwp\s*:",
+                content,
+                flags=re.IGNORECASE,
+            ):
+
+                score += 0.5
+
+            # Kandidat yang alamatnya berada dekat
+            # dengan identitas object lebih kuat.
+            address_position = (
+                match.start()
+            )
+
+            object_position = (
+                content_lower.find(
+                    object_terms[-1]
+                )
+            )
+
+            if (
+                object_position >= 0
+                and address_position >= object_position
+                and (
+                    address_position
+                    - object_position
+                ) < 1000
+            ):
+
+                score += 1.0
+
+            source = SourceChunk(
+                filename=filename,
+                chunk_text=content,
+                score=score,
+                file_path=file_path,
+            )
+
+            candidates.append(
+                (
+                    score,
+                    address,
+                    source,
+                    document_type,
+                )
+            )
+
+        # ==========================================================
+        # TIDAK ADA KANDIDAT
+        # ==========================================================
+
+        if not candidates:
+            return None
+
+        # ==========================================================
+        # PILIH KANDIDAT TERBAIK
+        # ==========================================================
+
+        candidates.sort(
+            key=lambda item: item[0],
+            reverse=True,
+        )
+
+        _, address, source, _ = (
+            candidates[0]
+        )
+
+        return address, source
 
     @staticmethod
     def _is_location_question(
@@ -3747,6 +4372,216 @@ class RAGEngine:
     # ==================================================================
     # EXTRACT FILENAME
     # ==================================================================
+
+    def _extract_company_address_candidates(
+        self,
+        question_lower: str,
+        requested_year: str | None = None,
+    ) -> list[tuple[str, str, SourceChunk]]:
+        """
+        Mengambil seluruh kandidat alamat yang relevan.
+
+        Return:
+            list of (address, document_type, source)
+        """
+
+        try:
+            results = self.indexer.store.collection.get(
+                include=["documents", "metadatas"]
+            )
+        except Exception:
+            return []
+
+        documents = (
+            results.get("documents", []) or []
+        )
+        metadatas = (
+            results.get("metadatas", []) or []
+        )
+
+        # ----------------------------------------------------------
+        # OBJECT DARI PERTANYAAN
+        # ----------------------------------------------------------
+
+        entity_match = re.search(
+            r"\b(pt|cv|firma|koperasi|yayasan)\.?\s+"
+            r"([a-z0-9][a-z0-9 .,&'-]{2,})",
+            question_lower,
+            flags=re.IGNORECASE,
+        )
+
+        entity_name = ""
+
+        if entity_match:
+            entity_name = (
+                f"{entity_match.group(1)} "
+                f"{entity_match.group(2)}"
+            ).strip()
+
+            entity_name = re.split(
+                r"\s+(?:tahun|pada|menurut|dalam|di|untuk|yang)\b",
+                entity_name,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip()
+
+        candidates = []
+
+        for content, metadata in zip(
+            documents,
+            metadatas,
+        ):
+            content = content or ""
+            metadata = metadata or {}
+
+            content_lower = content.lower()
+
+            # Object harus cocok.
+            if entity_name and entity_name not in content_lower:
+                continue
+
+            if "alamat" not in content_lower:
+                continue
+
+            # ------------------------------------------------------
+            # FILTER TAHUN BERDASARKAN METADATA
+            # ------------------------------------------------------
+
+            if requested_year:
+                metadata_year = str(
+                    metadata.get("year", "")
+                ).strip()
+
+                if metadata_year != requested_year:
+                    continue
+
+            # ------------------------------------------------------
+            # JENIS DOKUMEN
+            # ------------------------------------------------------
+
+            filename = str(
+                metadata.get("filename", "")
+            ).strip()
+
+            file_path = str(
+                metadata.get("file_path", "")
+            ).strip()
+
+            file_context = (
+                f"{filename} {file_path}"
+            ).lower()
+
+            document_type = "dokumen"
+
+            if any(
+                term in file_context
+                for term in [
+                    "lapkeu",
+                    "laporan keuangan",
+                    "neraca",
+                    "rugi laba",
+                ]
+            ):
+                document_type = "laporan keuangan"
+
+            elif any(
+                term in file_context
+                for term in [
+                    "faktur",
+                    "faktur pajak",
+                ]
+            ):
+                document_type = "faktur pajak"
+
+            elif "invoice" in file_context:
+                document_type = "invoice"
+
+            elif any(
+                term in file_context
+                for term in [
+                    "spt",
+                    "surat pemberitahuan",
+                ]
+            ):
+                document_type = "SPT"
+
+            # ------------------------------------------------------
+            # EKSTRAKSI ALAMAT
+            # ------------------------------------------------------
+
+            match = re.search(
+                r"alamat\s*:\s*(.*?)(?="
+                r"\s+npwp\s*:"
+                r"|\s+nama\s*:"
+                r"|\s+daftar\s+peredaran\s+usaha\b"
+                r"|\s+baris\s+\d+\s*:"
+                r"|\s+kolom\s+\d+\s*:"
+                r"|\s+\d+\s*\|"
+                r"|$"
+                r")",
+                content,
+                flags=re.IGNORECASE,
+            )
+
+            if not match:
+                continue
+
+            address = match.group(1).strip()
+
+            if not address:
+                continue
+
+            # ------------------------------------------------------
+            # CLEANUP OCR / TABEL
+            # ------------------------------------------------------
+
+            address = re.sub(
+                r"\s+Baris\s+\d+\s*:.*$",
+                "",
+                address,
+                flags=re.IGNORECASE,
+            )
+
+            address = re.sub(
+                r"\s+Kolom\s+\d+\s*:.*$",
+                "",
+                address,
+                flags=re.IGNORECASE,
+            )
+
+            address = re.sub(
+                r"\s+\d+\s*\|.*$",
+                "",
+                address,
+                flags=re.IGNORECASE,
+            )
+
+            address = re.sub(
+                r"\s{2,}",
+                " ",
+                address,
+            ).strip(" ,;|")
+
+            if not address:
+                continue
+
+            source = SourceChunk(
+                filename=filename,
+                chunk_text=content,
+                score=1.0,
+                file_path=file_path,
+            )
+
+            candidates.append(
+                (
+                    address,
+                    document_type,
+                    source,
+                )
+            )
+
+        return candidates
+
 
     @staticmethod
     def _extract_filename(
