@@ -31,6 +31,43 @@ def timed(callable_obj):
     return result, time.perf_counter() - start
 
 
+def measure_stream(
+    engine: RAGEngine,
+    question: str,
+    top_k: int,
+    model: str,
+) -> dict[str, Any]:
+    start = time.perf_counter()
+
+    token_iter, sources = engine.query_stream(
+        question,
+        top_k=top_k,
+        model=model,
+    )
+
+    stream_ready = time.perf_counter()
+    first_token_seconds: float | None = None
+    tokens: list[str] = []
+
+    for token in token_iter:
+        if first_token_seconds is None:
+            first_token_seconds = (
+                time.perf_counter() - start
+            )
+
+        tokens.append(token)
+
+    total_seconds = time.perf_counter() - start
+
+    return {
+        "stream_setup_seconds": stream_ready - start,
+        "first_token_seconds": first_token_seconds,
+        "total_seconds": total_seconds,
+        "text": "".join(tokens),
+        "sources": sources,
+    }
+
+
 def print_environment() -> None:
     print("=" * 76)
     print("QVARn-RAG CPU PERFORMANCE BASELINE - STAGE 9A")
@@ -63,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
         "--warm-runs",
         type=int,
         default=3,
+        help=(
+            "Number of warm repetitions for embedding and AI. "
+            "AI adds one cold run before these repetitions."
+        ),
     )
     parser.add_argument(
         "--include-ai",
@@ -167,6 +208,55 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 print()
                 continue
+
+            ai_runs = max(args.warm_runs, 1)
+
+            for run_index in range(ai_runs + 1):
+                result = measure_stream(
+                    engine,
+                    case["question"],
+                    int(case.get("top_k", 5)),
+                    settings.ollama_model,
+                )
+
+                label = (
+                    "cold"
+                    if run_index == 0
+                    else f"warm#{run_index}"
+                )
+
+                first_token = (
+                    "n/a"
+                    if result["first_token_seconds"] is None
+                    else f"{result['first_token_seconds']:.3f}s"
+                )
+
+                print(
+                    f"[PASS] {case['id']} - "
+                    f"{case['name']} ({label})"
+                )
+                print(
+                    f"       Stream setup : "
+                    f"{result['stream_setup_seconds']:.3f}s"
+                )
+                print(
+                    f"       First token  : {first_token}"
+                )
+                print(
+                    f"       Total        : "
+                    f"{result['total_seconds']:.3f}s"
+                )
+                print(
+                    f"       Sources      : "
+                    f"{len(result['sources'])}"
+                )
+                print(
+                    f"       Output chars : "
+                    f"{len(result['text'])}"
+                )
+                print()
+
+            continue
 
         response, elapsed = timed(
             lambda case=case: engine.query(
