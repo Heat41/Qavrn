@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import List
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class Embedder:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         self.model_name = model_name
         self._model = None  # lazy
+        self._model_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -38,21 +40,33 @@ class Embedder:
         )
         return [v.tolist() for v in vecs]
 
+    def warm_up(self) -> None:
+        """Load the embedding model once without performing a real query."""
+        self._model_instance()
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
     def _model_instance(self):
-        if self._model is None:
+        if self._model is not None:
+            return self._model
+
+        with self._model_lock:
+            if self._model is not None:
+                return self._model
+
             try:
                 from sentence_transformers import SentenceTransformer  # type: ignore
             except ImportError:
                 raise ImportError(
                     "sentence-transformers is required: pip install sentence-transformers"
                 )
+
             logger.info("Loading embedding model '%s' …", self.model_name)
             self._model = SentenceTransformer(self.model_name)
             logger.info("Model loaded.")
+
         return self._model
 
     @property
