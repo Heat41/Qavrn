@@ -286,6 +286,27 @@ class RAGEngine:
                     if filtered_candidates:
                         candidates = filtered_candidates
 
+                else:
+                    # Untuk pertanyaan alamat perusahaan umum, gunakan
+                    # sumber identitas yang lebih kuat sebelum faktur/
+                    # invoice yang dapat memuat alamat lawan transaksi.
+                    preferred_types = [
+                        "laporan keuangan",
+                        "SPT",
+                        "dokumen",
+                    ]
+
+                    for preferred_type in preferred_types:
+                        preferred_candidates = [
+                            candidate
+                            for candidate in candidates
+                            if candidate[1] == preferred_type
+                        ]
+
+                        if preferred_candidates:
+                            candidates = preferred_candidates
+                            break
+
                 unique_candidates = {}
 
                 for address, document_type, source in candidates:
@@ -3753,6 +3774,7 @@ class RAGEngine:
         )
 
         entity_name = ""
+        entity_terms: list[str] = []
 
         if entity_match:
             entity_name = (
@@ -3767,6 +3789,11 @@ class RAGEngine:
                 flags=re.IGNORECASE,
             )[0].strip()
 
+            entity_terms = re.findall(
+                r"[a-z0-9]+",
+                entity_name.lower(),
+            )
+
         candidates = []
 
         for content, metadata in zip(
@@ -3777,12 +3804,24 @@ class RAGEngine:
             metadata = metadata or {}
 
             content_lower = content.lower()
+            normalized_content = re.sub(
+                r"[^a-z0-9]+",
+                " ",
+                content_lower,
+            )
 
-            # Object harus cocok.
-            if entity_name and entity_name not in content_lower:
+            # Object harus cocok, tetapi jangan bergantung pada tanda
+            # baca. "PT Arinsa" dan "PT. Arinsa" harus dianggap sama.
+            if entity_terms and not all(
+                term in normalized_content.split()
+                for term in entity_terms
+            ):
                 continue
 
-            if "alamat" not in content_lower:
+            if (
+                "alamat" not in content_lower
+                and "alama :" not in content_lower
+            ):
                 continue
 
             # ------------------------------------------------------
@@ -3852,7 +3891,7 @@ class RAGEngine:
             # ------------------------------------------------------
 
             match = re.search(
-                r"alamat\s*:\s*(.*?)(?="
+                r"alama(?:t)?\s*:\s*(.*?)(?="
                 r"\s+npwp\s*:"
                 r"|\s+nama\s*:"
                 r"|\s+daftar\s+peredaran\s+usaha\b"
