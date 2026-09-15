@@ -4,7 +4,9 @@
     "name": "Director 2024",
     "question": "siapa direktur tahun 2024",
     "top_k": 10,
-    "expected_answer_contains": ["RUS'AN"],
+    "expected_answer_contains": [
+      "RUS'AN"
+    ],
     "require_sources": true
   },
   {
@@ -12,7 +14,9 @@
     "name": "Annual turnover 2024",
     "question": "berapa peredaran usaha PT Arinsa Energy Pratama tahun 2024",
     "top_k": 10,
-    "expected_answer_contains": ["Rp 1.248.761.500"],
+    "expected_answer_contains": [
+      "Rp 1.248.761.500"
+    ],
     "require_sources": true
   },
   {
@@ -51,5 +55,68 @@
     "top_k": 10,
     "expected_not_found": true,
     "require_sources": false
+  },
+  {
+    "id": "UAT_07",
+    "name": "Project revenue 2024",
+    "question": "berapa pendapatan proyek tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Rp 1.248.761.500"
+    ],
+    "expected_mode": "table",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_08",
+    "name": "Net revenue 2024",
+    "question": "berapa pendapatan bersih tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Rp 51.093.215,45"
+    ],
+    "expected_mode": "table",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_09",
+    "name": "Net profit 2024",
+    "question": "berapa laba bersih tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Rp 51.093.215,45"
+    ],
+    "expected_mode": "table",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_10",
+    "name": "SPT document search 2024",
+    "question": "cari spt tahun 2024",
+    "top_k": 10,
+    "expected_mode": "search",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_11",
+    "name": "Faktur document search 2024",
+    "question": "cari faktur pajak tahun 2024",
+    "top_k": 10,
+    "expected_mode": "search",
+    "expected_source_filename_contains_any": [
+      "faktur"
+    ],
+    "require_sources": true
+  },
+  {
+    "id": "UAT_12",
+    "name": "Invoice document search 2024",
+    "question": "cari invoice tahun 2024",
+    "top_k": 10,
+    "expected_mode": "search",
+    "expected_source_filename_contains_any": [
+      "invoice"
+    ],
+    "require_sources": true
   }
 ]
