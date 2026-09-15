@@ -127,248 +127,22 @@ class RAGEngine:
                 ),
             )
 
-        question_lower = (
-            question.lower().strip()
+        deterministic = self._resolve_deterministic_answer(
+            question,
+            chunks,
         )
 
-        requested_year = (
-            self._extract_year(question)
-        )
-
-        # ==============================================================
-        # DETERMINISTIC COMPANY ADDRESS
-        # ==============================================================
-
-        if self._is_address_question(question_lower):
-
-            candidates = self._extract_company_address_candidates(
-                question_lower,
-                requested_year,
-            )
-
-            if candidates:
-
-                requested_document_type = self._detect_document_type(
-            question_lower
-        )
-
-        if requested_document_type:
-            filtered_candidates = [
-                candidate
-                for candidate in candidates
-                if candidate[1] == requested_document_type
-            ]
-
-            if filtered_candidates:
-                candidates = filtered_candidates
-
-        unique_candidates = {}
-
-        for address, document_type, source in candidates:
-            normalized_address = re.sub(
-                r"\s+",
-                " ",
-                address.lower(),
-            ).strip(" ,.")
-
-            if normalized_address not in unique_candidates:
-                unique_candidates[normalized_address] = (
-                    address,
-                    document_type,
-                    source,
-                )
-
-        candidate_values = list(
-            unique_candidates.values()
-        )
-
-        if len(candidate_values) == 1:
-
-            address = candidate_values[0][0]
-
-            answer = (
-                f"Alamat perusahaan"
-                f"{f' tahun {requested_year}' if requested_year else ''}"
-                f" adalah {address}."
-            )
-
-        else:
-
-            answer_lines = [
-                (
-                    f"Ditemukan {len(candidate_values)} "
-                    "alamat berbeda"
-                    f"{f' pada tahun {requested_year}' if requested_year else ''}:"
-                )
-            ]
-
-            for address, document_type, _ in candidate_values:
-                answer_lines.append(
-                    f"- {document_type}: {address}"
-                )
-
-            answer_lines.append(
-                "Silakan tentukan sumber dokumen yang dimaksud."
-            )
-
-            answer = "\n".join(answer_lines)
-
-        def address_stream() -> Iterator[str]:
-            yield answer
-
-        address_sources = [
-            candidate[2]
-            for candidate in candidate_values
-        ]
-
-        return address_stream(), address_sources
-        # ==============================================================
-        # DETERMINISTIC DIRECTOR
-        # ==============================================================
-
-        director_question = any(
-            phrase in question.lower()
-            for phrase in [
-                "direktur",
-                "nama direktur",
-                "siapa direktur",
-                "pimpinan",
-                "siapa pimpinan",
-            ]
-        )
-
-        if director_question:
-
-            director_name = (
-                self._extract_director_name(
-                    chunks
-                )
-            )
-
-            if director_name:
-
-                answer = (
-                    f"Direktur perusahaan tahun "
-                    f"{requested_year or 'yang ditanyakan'} "
-                    f"adalah {director_name}."
-                )
-
-                return RAGResponse(
-                    answer=answer,
-                    sources=chunks,
-                    model_used="table",
-                    query_time_seconds=(
-                        time.perf_counter() - t0
-                    ),
-                )
-
-
-
-        # ==============================================================
-        # DETERMINISTIC PEREDARAN USAHA WP VS PEMERIKSA
-        # ==============================================================
-
-        if self._is_peredaran_usaha_comparison_question(
-            question_lower
-        ):
-
-            table_answer = (
-                self._extract_wp_pemeriksa_values(
-                    chunks,
-                    "Peredaran Usaha",
-                )
-            )
-
-            if table_answer:
-
-                wp_value, pemeriksa_value = (
-                    table_answer
-                )
-
-                answer = (
-                    "Peredaran Usaha menurut "
-                    f"Wajib Pajak: Rp {wp_value}\n"
-                    "Peredaran Usaha menurut "
-                    f"Pemeriksa: Rp {pemeriksa_value}"
-                )
-
-                return RAGResponse(
-                    answer=answer,
-                    sources=chunks,
-                    model_used="table",
-                    query_time_seconds=(
-                        time.perf_counter() - t0
-                    ),
-                )
-
-            # ----------------------------------------------------------
-            # JANGAN biarkan pertanyaan comparison masuk ke Ollama.
-            # Jika tabel pembanding tidak ditemukan, nyatakan bahwa
-            # data pembanding belum ditemukan.
-            # ----------------------------------------------------------
+        if deterministic is not None:
+            answer, answer_sources, answer_mode = deterministic
 
             return RAGResponse(
-                answer=(
-                    "Data perbandingan Peredaran Usaha "
-                    "menurut Wajib Pajak dan menurut Pemeriksa "
-                    "tidak ditemukan dalam dokumen yang relevan."
-                ),
-                sources=chunks,
-                model_used="search",
+                answer=answer,
+                sources=answer_sources,
+                model_used=answer_mode,
                 query_time_seconds=(
                     time.perf_counter() - t0
                 ),
             )
-
-
-        # ==============================================================
-        # DETERMINISTIC ANNUAL FINANCIAL VALUE
-        #
-        # Untuk pertanyaan finansial tahunan yang memiliki label
-        # eksplisit seperti "Pendapatan Proyek", jangan serahkan
-        # pemilihan angka kepada LLM.
-        # ==============================================================
-
-        if self._is_annual_financial_question(
-                question_lower,
-                requested_year,
-        ):
-
-            financial_value = (
-                self._extract_annual_financial_value(
-                    chunks,
-                    question_lower,
-                )
-            )
-
-            if financial_value:
-
-                normalized_value = (
-                    self._format_financial_value(
-                        financial_value
-                    )
-                )
-
-                financial_label = (
-                    self._get_financial_answer_label(
-                        question_lower
-                    )
-                )
-
-                answer = (
-                    f"{financial_label} tahun "
-                    f"{requested_year} sebesar "
-                    f"{normalized_value}."
-                )
-
-                return RAGResponse(
-                    answer=answer,
-                    sources=chunks,
-                    model_used="table",
-                    query_time_seconds=(
-                        time.perf_counter() - t0
-                    ),
-                )
 
         # ==============================================================
         # MODE AI
@@ -440,102 +214,54 @@ class RAGEngine:
 
             return empty_stream(), chunks
 
-        question_lower = (
-            question.lower().strip()
+        deterministic = self._resolve_deterministic_answer(
+            question,
+            chunks,
         )
 
-        requested_year = (
-            self._extract_year(question)
+        if deterministic is not None:
+            answer, answer_sources, _ = deterministic
+
+            def deterministic_stream() -> Iterator[str]:
+                yield answer
+
+            return deterministic_stream(), answer_sources
+
+        # ==============================================================
+        # MODE AI
+        # ==============================================================
+
+        model = model or settings.ollama_model
+
+        token_iter = self.ollama.generate_stream(
+            question,
+            context=context,
+            model=model,
         )
 
+        return token_iter, chunks
 
-        # ==============================================================
-        # DETERMINISTIC DIRECTOR
-        # ==============================================================
 
-        director_question = any(
-            phrase in question_lower
-            for phrase in [
-                "direktur",
-                "nama direktur",
-                "siapa direktur",
-                "pimpinan",
-                "siapa pimpinan",
-            ]
-        )
+    # ==================================================================
+    # DETERMINISTIC ANSWER
+    # ==================================================================
 
-        if director_question:
+    def _resolve_deterministic_answer(
+            self,
+            question: str,
+            chunks: List[SourceChunk],
+    ) -> tuple[str, List[SourceChunk], str] | None:
+        """
+        Menyatukan jawaban deterministik yang digunakan oleh query()
+        dan query_stream() agar keduanya tidak memiliki logic ganda.
+        """
 
-            director_name = (
-                self._extract_director_name(
-                    chunks
-                )
-            )
+        question_lower = question.lower().strip()
+        requested_year = self._extract_year(question)
 
-            if director_name:
-
-                answer = "Direktur perusahaan"
-
-                if requested_year:
-                    answer += (
-                        f" tahun {requested_year}"
-                    )
-
-                answer += (
-                    f" adalah {director_name}."
-                )
-
-                def director_stream() -> Iterator[str]:
-                    yield answer
-
-                return director_stream(), chunks
-
-        # DETERMINISTIC PEREDARAN USAHA WP VS PEMERIKSA
-        # ==============================================================
-
-        if self._is_peredaran_usaha_comparison_question(
-            question_lower
-        ):
-
-            table_answer = (
-                self._extract_wp_pemeriksa_values(
-                    chunks,
-                    "Peredaran Usaha",
-                )
-            )
-
-            if table_answer:
-
-                wp_value, pemeriksa_value = (
-                    table_answer
-                )
-
-                answer = (
-                    "Peredaran Usaha menurut "
-                    f"Wajib Pajak: Rp {wp_value}\n"
-                    "Peredaran Usaha menurut "
-                    f"Pemeriksa: Rp {pemeriksa_value}"
-                )
-
-                def comparison_stream() -> Iterator[str]:
-                    yield answer
-
-                return comparison_stream(), chunks
-
-            def comparison_empty_stream() -> Iterator[str]:
-                yield (
-                    "Data perbandingan Peredaran Usaha "
-                    "menurut Wajib Pajak dan menurut Pemeriksa "
-                    "tidak ditemukan dalam dokumen yang relevan."
-                )
-
-            return comparison_empty_stream(), chunks
-
-        # ==============================================================
-        # DETERMINISTIC ANNUAL FINANCIAL VALUE
-        # ==============================================================
-
-        # Jawaban alamat perusahaan secara deterministik.
+        # --------------------------------------------------------------
+        # ALAMAT PERUSAHAAN
+        # --------------------------------------------------------------
 
         if self._is_address_question(question_lower):
 
@@ -581,7 +307,6 @@ class RAGEngine:
                 )
 
                 if len(candidate_values) == 1:
-
                     address = candidate_values[0][0]
 
                     answer = (
@@ -591,7 +316,6 @@ class RAGEngine:
                     )
 
                 else:
-
                     answer_lines = [
                         (
                             f"Ditemukan {len(candidate_values)} "
@@ -611,35 +335,97 @@ class RAGEngine:
 
                     answer = "\n".join(answer_lines)
 
-                def address_stream() -> Iterator[str]:
-                    yield answer
-
-                address_sources = [
+                answer_sources = [
                     candidate[2]
                     for candidate in candidate_values
                 ]
 
-                return address_stream(), address_sources
+                return answer, answer_sources, "table"
+
+        # --------------------------------------------------------------
+        # DIREKTUR
+        # --------------------------------------------------------------
+
+        director_question = any(
+            phrase in question_lower
+            for phrase in [
+                "direktur",
+                "nama direktur",
+                "siapa direktur",
+                "pimpinan",
+                "siapa pimpinan",
+            ]
+        )
+
+        if director_question:
+
+            director_name = self._extract_director_name(
+                chunks
+            )
+
+            if director_name:
+
+                answer = "Direktur perusahaan"
+
+                if requested_year:
+                    answer += f" tahun {requested_year}"
+
+                answer += f" adalah {director_name}."
+
+                return answer, chunks, "table"
+
+        # --------------------------------------------------------------
+        # PEREDARAN USAHA WP VS PEMERIKSA
+        # --------------------------------------------------------------
+
+        if self._is_peredaran_usaha_comparison_question(
+                question_lower
+        ):
+
+            table_answer = self._extract_wp_pemeriksa_values(
+                chunks,
+                "Peredaran Usaha",
+            )
+
+            if table_answer:
+
+                wp_value, pemeriksa_value = table_answer
+
+                answer = (
+                    "Peredaran Usaha menurut "
+                    f"Wajib Pajak: Rp {wp_value}\n"
+                    "Peredaran Usaha menurut "
+                    f"Pemeriksa: Rp {pemeriksa_value}"
+                )
+
+                return answer, chunks, "table"
+
+            return (
+                "Data perbandingan Peredaran Usaha "
+                "menurut Wajib Pajak dan menurut Pemeriksa "
+                "tidak ditemukan dalam dokumen yang relevan.",
+                chunks,
+                "search",
+            )
+
+        # --------------------------------------------------------------
+        # NILAI FINANSIAL TAHUNAN
+        # --------------------------------------------------------------
 
         if self._is_annual_financial_question(
                 question_lower,
                 requested_year,
         ):
 
-            # Untuk deterministic financial extraction,
-            # gunakan seluruh financial chunks pada tahun yang diminta.
             extraction_chunks = chunks
 
             if requested_year:
 
-                financial_results = (
-                    self._get_financial_document_chunks(
-                        requested_year
-                    )
+                financial_results = self._get_financial_document_chunks(
+                    requested_year
                 )
 
                 if financial_results:
-
                     extraction_chunks = [
                         SourceChunk(
                             filename=str(
@@ -664,25 +450,19 @@ class RAGEngine:
                         for result in financial_results
                     ]
 
-            financial_value = (
-                self._extract_annual_financial_value(
-                    extraction_chunks,
-                    question_lower,
-                )
+            financial_value = self._extract_annual_financial_value(
+                extraction_chunks,
+                question_lower,
             )
 
             if financial_value:
 
-                normalized_value = (
-                    self._format_financial_value(
-                        financial_value
-                    )
+                normalized_value = self._format_financial_value(
+                    financial_value
                 )
 
-                financial_label = (
-                    self._get_financial_answer_label(
-                        question_lower
-                    )
+                financial_label = self._get_financial_answer_label(
+                    question_lower
                 )
 
                 answer = (
@@ -691,25 +471,9 @@ class RAGEngine:
                     f"{normalized_value}."
                 )
 
-                def financial_stream() -> Iterator[str]:
-                    yield answer
+                return answer, chunks, "table"
 
-                return financial_stream(), chunks
-
-        # ==============================================================
-        # MODE AI
-        # ==============================================================
-
-        model = model or settings.ollama_model
-
-        token_iter = self.ollama.generate_stream(
-            question,
-            context=context,
-            model=model,
-        )
-
-        return token_iter, chunks
-
+        return None
 
     # ==================================================================
     # DIRECTOR RETRIEVAL
