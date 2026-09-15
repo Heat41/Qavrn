@@ -104,7 +104,7 @@ class OllamaClient:
             self,
             model: str | None = None,
     ) -> None:
-        """Load the Ollama model into memory without generating an answer."""
+        """Load the Ollama model and execute one minimal inference step."""
 
         try:
             import requests
@@ -123,12 +123,14 @@ class OllamaClient:
                 f"{self.base_url}/api/generate",
                 json={
                     "model": model,
-                    "prompt": "",
+                    "prompt": "Siap.",
                     "stream": False,
                     "keep_alive": _KEEP_ALIVE,
                     "options": {
                         "num_gpu": 0,
+                        "num_ctx": 2048,
                         "num_predict": 1,
+                        "temperature": 0.0,
                     },
                 },
                 timeout=(10, 120),
