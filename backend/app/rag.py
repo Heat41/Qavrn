@@ -3192,15 +3192,19 @@ class RAGEngine:
                 r"peredaran\s+usaha",
             ]
 
-        for content in texts:
+        # Prioritaskan label yang paling spesifik pada seluruh chunk
+        # sebelum mencoba label yang lebih umum. Ini penting untuk kasus
+        # seperti "Total Peredaran Usaha" yang dapat berada pada chunk
+        # setelah baris-baris komponen "Peredaran Usaha".
+        for label_pattern in label_patterns:
 
-            normalized = re.sub(
-                r"\s+",
-                " ",
-                content,
-            )
+            for content in texts:
 
-            for label_pattern in label_patterns:
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
 
                 match = re.search(
                     label_pattern,
