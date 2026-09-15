@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Source } from '../types'
+import { scorePercentage } from '../lib/sourceScore'
 
 interface Props {
   source: Source
@@ -16,7 +17,7 @@ export function SourceCard({ source, rank }: Props) {
   const [expanded, setExpanded] = useState(false)
 
   const color = scoreColor(source.score)
-  const pct = Math.round(source.score * 100)
+  const pct = scorePercentage(source.score)
 
   const preview = source.chunk_text.replace(/\s+/g, ' ').trim()
   const short = preview.length > 180
