@@ -80,12 +80,17 @@ class FileWatcher:
 
         logger.info("FileWatcher dihentikan.")
 
-    def watch(self, folder: str) -> None:
+    def watch(
+            self,
+            folder: str,
+            scan_initial: bool = True,
+    ) -> None:
         """
         Mulai memantau folder secara recursive.
 
-        Initial scan dilakukan terlebih dahulu agar semua file yang
-        sudah ada di folder masuk ke index tanpa memerlukan aksi manual.
+        Secara default initial scan tetap dilakukan agar perilaku publik
+        lama tidak berubah. Startup API dapat memakai scan_initial=False
+        lalu menjalankan scan di background.
         """
         if self._observer is None:
             raise RuntimeError(
@@ -118,33 +123,11 @@ class FileWatcher:
             return
 
         # --------------------------------------------------------------
-        # 1. INITIAL SCAN
+        # 1. INITIAL SCAN (opsional)
         # --------------------------------------------------------------
 
-        logger.info(
-            "Memulai pemindaian awal: %s",
-            key,
-        )
-
-        try:
-            summary = self._indexer.index_folder(root)
-
-            logger.info(
-                "Pemindaian selesai: %s | total=%d indexed=%d "
-                "skipped=%d failed=%d",
-                key,
-                summary.get("total", 0),
-                summary.get("indexed", 0),
-                summary.get("skipped", 0),
-                summary.get("failed", 0),
-            )
-
-        except Exception as exc:
-            logger.exception(
-                "Gagal melakukan pemindaian awal %s: %s",
-                key,
-                exc,
-            )
+        if scan_initial:
+            self.scan_initial(root)
 
         # --------------------------------------------------------------
         # 2. START WATCHDOG
@@ -204,6 +187,36 @@ class FileWatcher:
             "Sekarang memantau folder: %s",
             key,
         )
+
+    def scan_initial(self, folder: str | Path) -> None:
+        """Index isi awal folder tanpa mengubah status watch."""
+
+        root = Path(folder).resolve()
+
+        logger.info(
+            "Memulai pemindaian awal: %s",
+            root,
+        )
+
+        try:
+            summary = self._indexer.index_folder(root)
+
+            logger.info(
+                "Pemindaian selesai: %s | total=%d indexed=%d "
+                "skipped=%d failed=%d",
+                root,
+                summary.get("total", 0),
+                summary.get("indexed", 0),
+                summary.get("skipped", 0),
+                summary.get("failed", 0),
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "Gagal melakukan pemindaian awal %s: %s",
+                root,
+                exc,
+            )
 
     def unwatch(self, folder: str) -> None:
         """
