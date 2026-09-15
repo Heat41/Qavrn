@@ -8,6 +8,8 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
+_KEEP_ALIVE = "30m"
+
 
 _SYSTEM_PROMPT = """
 Anda adalah Qvarn, asisten AI untuk menjawab pertanyaan berdasarkan dokumen lokal.
@@ -95,6 +97,79 @@ class OllamaClient:
             return False
 
     # ------------------------------------------------------------------
+    # WARM UP
+    # ------------------------------------------------------------------
+
+    def warm_up(
+            self,
+            model: str | None = None,
+    ) -> None:
+        """Load the Ollama model into memory without generating an answer."""
+
+        try:
+            import requests
+
+        except ImportError:
+
+            raise ImportError(
+                "requests is required: pip install requests"
+            )
+
+        model = model or settings.ollama_model
+
+        try:
+
+            resp = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": "",
+                    "stream": False,
+                    "keep_alive": _KEEP_ALIVE,
+                    "options": {
+                        "num_gpu": 0,
+                        "num_predict": 1,
+                    },
+                },
+                timeout=(10, 120),
+            )
+
+            if resp.status_code >= 400:
+                logger.error(
+                    "Ollama warm-up error response: %s",
+                    resp.text,
+                )
+                resp.raise_for_status()
+
+        except requests.exceptions.ConnectTimeout:
+
+            raise ConnectionError(
+                f"Ollama tidak dapat dihubungi "
+                f"dalam batas waktu koneksi: "
+                f"{self.base_url}"
+            )
+
+        except requests.exceptions.ReadTimeout:
+
+            raise TimeoutError(
+                "Ollama terlalu lama saat memuat model."
+            )
+
+        except requests.exceptions.ConnectionError:
+
+            raise ConnectionError(
+                f"Tidak dapat terhubung ke Ollama di "
+                f"{self.base_url}. "
+                "Pastikan Ollama sedang berjalan."
+            )
+
+        except requests.exceptions.HTTPError as exc:
+
+            raise RuntimeError(
+                f"Ollama mengembalikan error saat warm-up: {exc}"
+            )
+
+    # ------------------------------------------------------------------
     # GENERATE
     # ------------------------------------------------------------------
 
@@ -176,6 +251,7 @@ class OllamaClient:
             "system": _SYSTEM_PROMPT,
             "prompt": user_content,
             "stream": True,
+            "keep_alive": _KEEP_ALIVE,
 
             "options": {
                 # CPU only
