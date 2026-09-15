@@ -12,9 +12,15 @@ from backend.app.llm import OllamaClient
 from backend.app.rag import RAGEngine
 
 
-NOT_FOUND_TEXT = (
-    "Informasi tersebut tidak ditemukan "
-    "dalam dokumen yang diberikan."
+NOT_FOUND_TEXTS = (
+    (
+        "Informasi tersebut tidak ditemukan "
+        "dalam dokumen yang diberikan."
+    ),
+    (
+        "Informasi tersebut tidak ditemukan "
+        "dalam dokumen yang diindeks."
+    ),
 )
 
 
@@ -114,7 +120,11 @@ def evaluate_case(
         )
 
     if case.get("expected_not_found"):
-        if NOT_FOUND_TEXT.casefold() not in answer.casefold():
+        answer_folded = answer.casefold()
+        if not any(
+            text.casefold() in answer_folded
+            for text in NOT_FOUND_TEXTS
+        ):
             failures.append(
                 "expected not-found answer"
             )
