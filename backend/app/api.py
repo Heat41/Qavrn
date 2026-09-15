@@ -4,6 +4,7 @@ import os
 import asyncio
 import json
 import logging
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List
@@ -31,6 +32,36 @@ logging.basicConfig(
 FRONTEND_DIST = (
         Path(__file__).parent.parent.parent / "frontend" / "dist"
 )
+
+
+def _warm_runtime(
+        indexer: Indexer,
+        ollama: OllamaClient,
+) -> None:
+    """Warm CPU-heavy models in the background without blocking startup."""
+
+    try:
+        indexer.embedder.warm_up()
+        logger.info("Embedding model warm-up selesai.")
+
+    except Exception:
+        logger.exception(
+            "Embedding warm-up gagal. "
+            "Qvarn tetap berjalan dan akan mencoba lagi saat dibutuhkan."
+        )
+
+    try:
+        ollama.warm_up(settings.ollama_model)
+        logger.info(
+            "Ollama model warm-up selesai: %s",
+            settings.ollama_model,
+        )
+
+    except Exception:
+        logger.exception(
+            "Ollama warm-up gagal. "
+            "Qvarn tetap berjalan; model akan dicoba saat query AI."
+        )
 
 
 # ===========================================================================
@@ -103,6 +134,15 @@ async def lifespan(app: FastAPI):
     app.state.indexer = indexer
     app.state.ollama = ollama
     app.state.watcher = watcher
+
+    warmup_thread = threading.Thread(
+        target=_warm_runtime,
+        args=(indexer, ollama),
+        name="qvarn-model-warmup",
+        daemon=True,
+    )
+    warmup_thread.start()
+    app.state.warmup_thread = warmup_thread
 
     logger.info("Qavrn API ready.")
 
