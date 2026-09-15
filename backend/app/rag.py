@@ -3930,17 +3930,43 @@ class RAGEngine:
             question: str,
     ) -> str | None:
 
-        pattern = re.compile(
-            r"([^\s\"'<>]+?\.(?:pdf|docx?|xlsx?|csv|txt|md|html?|json))",
-            re.IGNORECASE,
+        extensions = (
+            r"(?:pdf|docx?|xlsx?|csv|txt|md|html?|json)"
         )
 
-        match = pattern.search(
-            question
+        # Nama file yang disebut setelah kata "file" / "dokumen".
+        # Mendukung nama yang mengandung spasi.
+        match = re.search(
+            rf"\b(?:file|dokumen)\s+[\"']?"
+            rf"(.+?\.{extensions})"
+            rf"[\"']?(?=\s|$)",
+            question,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            return match.group(1).strip(
+                " \t\r\n\"'"
+            )
+
+        # Nama file yang ditulis di dalam tanda kutip.
+        match = re.search(
+            rf"[\"']([^\"']+?\.{extensions})[\"']",
+            question,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            return match.group(1).strip()
+
+        # Fallback untuk nama file tanpa spasi.
+        match = re.search(
+            rf"([^\s\"'<>]+?\.{extensions})",
+            question,
+            flags=re.IGNORECASE,
         )
 
         if not match:
-
             return None
 
         return match.group(1).strip()
