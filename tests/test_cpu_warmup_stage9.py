@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import threading
 import time
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from backend.app.api import _warm_runtime
 from backend.app.embedder import Embedder
 from backend.app.llm import OllamaClient, _KEEP_ALIVE
+from backend.app.watcher import FileWatcher
 
 
 class TestEmbeddingWarmup(unittest.TestCase):
@@ -119,6 +122,70 @@ class TestOllamaWarmup(unittest.TestCase):
             _KEEP_ALIVE,
         )
 
+
+
+
+class TestWatcherStartupScan(unittest.TestCase):
+
+    class FakeObserver:
+
+        def schedule(
+            self,
+            handler,
+            path: str,
+            recursive: bool,
+        ):
+            return object()
+
+    class FakeIndexer:
+
+        def __init__(self) -> None:
+            self.scans: list[str] = []
+
+        def index_folder(self, folder: Path):
+            self.scans.append(str(folder))
+            return {
+                "total": 0,
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 0,
+            }
+
+    def test_watch_can_register_without_initial_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            indexer = self.FakeIndexer()
+            watcher = FileWatcher(
+                indexer=indexer,
+                supported_extensions=[".txt"],
+            )
+            watcher._observer = self.FakeObserver()
+
+            watcher.watch(
+                directory,
+                scan_initial=False,
+            )
+
+            self.assertEqual(indexer.scans, [])
+            self.assertIn(
+                str(Path(directory).resolve()),
+                watcher.watched_folders,
+            )
+
+    def test_watch_default_still_runs_initial_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            indexer = self.FakeIndexer()
+            watcher = FileWatcher(
+                indexer=indexer,
+                supported_extensions=[".txt"],
+            )
+            watcher._observer = self.FakeObserver()
+
+            watcher.watch(directory)
+
+            self.assertEqual(
+                indexer.scans,
+                [str(Path(directory).resolve())],
+            )
 
 class TestRuntimeWarmup(unittest.TestCase):
 
