@@ -2358,39 +2358,6 @@ class RAGEngine:
             )
         )
 
-        location_terms = [
-            "dimana",
-            "di mana",
-            "terletak",
-            "letaknya",
-            "lokasi",
-            "folder",
-            "ada dimana",
-            "ada di mana",
-        ]
-
-        file_search_terms = [
-            "carikan file",
-            "cari file",
-            "temukan file",
-            "tampilkan file",
-            "carikan dokumen",
-            "cari dokumen",
-            "temukan dokumen",
-            "tampilkan dokumen",
-        ]
-
-        return (
-            any(
-                term in question_lower
-                for term in location_terms
-            )
-            or
-            any(
-                term in question_lower
-                for term in file_search_terms
-            )
-        )
 
     # ==================================================================
     # BUILD SEARCH ANSWER
