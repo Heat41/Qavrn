@@ -51,6 +51,7 @@ def evaluate_case(
     case: dict[str, Any],
     answer: str,
     source_filenames: list[str],
+    mode: str,
 ) -> list[str]:
     failures: list[str] = []
 
@@ -62,6 +63,14 @@ def evaluate_case(
             failures.append(
                 f"answer missing expected text: {expected!r}"
             )
+
+    expected_mode = case.get(
+        "expected_mode"
+    )
+    if expected_mode and mode != expected_mode:
+        failures.append(
+            f"expected mode {expected_mode!r}, got {mode!r}"
+        )
 
     expected_source = case.get(
         "expected_source_filename"
@@ -75,6 +84,25 @@ def evaluate_case(
             failures.append(
                 "expected source filename not returned: "
                 f"{expected_source}"
+            )
+
+    expected_source_tokens = case.get(
+        "expected_source_filename_contains_any",
+        [],
+    )
+    if expected_source_tokens:
+        folded_names = [
+            name.casefold()
+            for name in source_filenames
+        ]
+        if not any(
+            token.casefold() in name
+            for token in expected_source_tokens
+            for name in folded_names
+        ):
+            failures.append(
+                "no source filename matched any expected token: "
+                + ", ".join(expected_source_tokens)
             )
 
     require_sources = case.get(
@@ -101,7 +129,14 @@ def evaluate_case(
 def run_case(
     engine: RAGEngine,
     case: dict[str, Any],
-) -> tuple[bool, str, list[str], list[str], float]:
+) -> tuple[
+    bool,
+    str,
+    list[str],
+    str,
+    list[str],
+    float,
+]:
     response = engine.query(
         case["question"],
         top_k=int(case.get("top_k", 10)),
@@ -116,12 +151,14 @@ def run_case(
         case,
         response.answer,
         source_filenames,
+        response.model_used,
     )
 
     return (
         not failures,
         response.answer,
         source_filenames,
+        response.model_used,
         failures,
         response.query_time_seconds,
     )
@@ -236,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
                 ok,
                 answer,
                 source_filenames,
+                mode,
                 failures,
                 elapsed,
             ) = run_case(
@@ -263,6 +301,9 @@ def main(argv: list[str] | None = None) -> int:
 
         print(
             f"[{status}] {case_id} - {name}"
+        )
+        print(
+            f"       Mode   : {mode}"
         )
         print(
             f"       Answer : {answer}"
