@@ -39,3 +39,43 @@ process each time. Do not treat one process's warm timings as cold timings.
 
 This Stage 9A runner is diagnostic and is not part of normal unit-test
 discovery.
+
+
+## Stage 9C - Indexing performance
+
+The indexing benchmark uses a **temporary Chroma database**. It does not write
+to the production `data/chroma` directory.
+
+From the repository root:
+
+```powershell
+python -m tests.performance.benchmark_indexing
+```
+
+The default run uses files under `test-data`, warms MiniLM once, and reports
+per-file timings for:
+
+- parsing (including OCR when the parser decides OCR is required)
+- chunking
+- batch embedding
+- Chroma write
+- total indexing pipeline
+
+It also runs the whole folder twice against a separate temporary index:
+
+1. first indexing pass
+2. unchanged-file pass
+
+This makes the cost of startup scans with no changed files visible.
+
+To benchmark specific real documents without changing the production index:
+
+```powershell
+python -m tests.performance.benchmark_indexing \
+  --file "C:\path\native-text.pdf" \
+  --file "C:\path\scanned.pdf" \
+  --file "C:\path\workbook.xlsx" \
+  --skip-folder
+```
+
+For meaningful comparisons, use the same files between runs.
