@@ -159,7 +159,7 @@ class FakeWatcher:
     def __init__(self) -> None:
         self.watched_folders = []
 
-    def watch(self, folder: str):
+    def watch(self, folder: str, scan_initial: bool = True):
         if folder not in self.watched_folders:
             self.watched_folders.append(folder)
 
