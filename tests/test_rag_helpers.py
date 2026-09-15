@@ -49,6 +49,41 @@ class TestRAGHelpers(unittest.TestCase):
             )
         )
 
+    def test_document_search_intent_detection(self) -> None:
+        for question in [
+            "cari spt tahun 2024",
+            "carikan faktur pajak tahun 2024",
+            "temukan invoice tahun 2024",
+            "tampilkan laporan keuangan tahun 2024",
+        ]:
+            self.assertTrue(
+                RAGEngine._is_document_search_question(
+                    question
+                )
+            )
+            self.assertTrue(
+                RAGEngine._is_search_only_question(
+                    question
+                )
+            )
+
+    def test_document_content_question_is_not_search_only(self) -> None:
+        for question in [
+            "berapa isi spt tahun 2024",
+            "jelaskan faktur pajak tahun 2024",
+            "apa isi invoice tahun 2024",
+        ]:
+            self.assertFalse(
+                RAGEngine._is_document_search_question(
+                    question
+                )
+            )
+            self.assertFalse(
+                RAGEngine._is_search_only_question(
+                    question
+                )
+            )
+
     def test_result_matches_year_is_strict_when_metadata_present(self) -> None:
         result_2024 = SearchResult(
             chunk_id="1",
