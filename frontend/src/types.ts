@@ -37,3 +37,34 @@ export interface IndexSummary {
   documents: number
   chunks: number
 }
+
+
+export interface AskTokenEvent {
+  type: 'token'
+  content: string
+}
+
+export interface AskSourcesEvent {
+  type: 'sources'
+  sources: Source[]
+}
+
+export interface AskErrorEvent {
+  type: 'error'
+  message: string
+}
+
+export type AskStreamEvent =
+  | AskTokenEvent
+  | AskSourcesEvent
+  | AskErrorEvent
+
+export interface DocumentMutationResult {
+  success: boolean
+  file_path: string
+  filename: string
+  indexed: boolean
+  message: string
+  documents: number
+  chunks: number
+}
