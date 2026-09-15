@@ -2380,19 +2380,8 @@ class RAGEngine:
             question.lower()
         )
 
-        is_location = any(
-            term in question_lower
-            for term in [
-                "dimana",
-                "di mana",
-                "terletak",
-                "letaknya",
-                "lokasi",
-                "folder",
-                "ada dimana",
-
-                "ada di mana",
-            ]
+        is_location = RAGEngine._is_location_question(
+            question_lower
         )
 
         if is_location:
