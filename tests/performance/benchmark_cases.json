@@ -1,0 +1,41 @@
+[
+  {
+    "id": "BENCH_SEARCH_FILE",
+    "name": "Exact file search",
+    "kind": "query",
+    "question": "di mana file Neraca dan RL PT AEP 2024.xls",
+    "top_k": 10,
+    "expected_mode": "search"
+  },
+  {
+    "id": "BENCH_DIRECTOR",
+    "name": "Director deterministic",
+    "kind": "query",
+    "question": "siapa direktur tahun 2024",
+    "top_k": 10,
+    "expected_mode": "table"
+  },
+  {
+    "id": "BENCH_TURNOVER",
+    "name": "Turnover deterministic",
+    "kind": "query",
+    "question": "berapa peredaran usaha PT Arinsa Energy Pratama tahun 2024",
+    "top_k": 10,
+    "expected_mode": "table"
+  },
+  {
+    "id": "BENCH_SEARCH_SPT",
+    "name": "SPT metadata search",
+    "kind": "query",
+    "question": "cari spt tahun 2024",
+    "top_k": 10,
+    "expected_mode": "search"
+  },
+  {
+    "id": "BENCH_AI",
+    "name": "AI answer",
+    "kind": "ai",
+    "question": "jelaskan kegiatan operasional perusahaan tahun 2024",
+    "top_k": 5
+  }
+]
