@@ -67,7 +67,11 @@ class FakeWatcher:
         self.watch_calls = []
         self.unwatch_calls = []
 
-    def watch(self, folder: str) -> None:
+    def watch(
+        self,
+        folder: str,
+        scan_initial: bool = True,
+    ) -> None:
         self.watch_calls.append(folder)
         if folder not in self.watched_folders:
             self.watched_folders.append(folder)
