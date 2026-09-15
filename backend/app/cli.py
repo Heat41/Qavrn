@@ -7,6 +7,7 @@ Usage:
     python -m backend.app.cli search "your query" [--top-k N]
     python -m backend.app.cli ask "your question" [--top-k N] [--model MODEL]
     python -m backend.app.cli watch /path/to/folder
+    python -m backend.app.cli debug-peredaran YEAR
 """
 from __future__ import annotations
 
@@ -110,6 +111,166 @@ def cmd_ask(args: argparse.Namespace) -> int:
     for rank, src in enumerate(sources, start=1):
         bar = "█" * int(src.score * 10) + "░" * (10 - int(src.score * 10))
         print(f"  {rank}. [{bar}] {src.score:.3f}  {src.filename}")
+
+    return 0
+
+
+def cmd_debug_peredaran(args: argparse.Namespace) -> int:
+    """Inspect indexed turnover chunks for one tax year."""
+
+    from .config import settings
+    from .indexer import Indexer
+    from .llm import OllamaClient
+    from .rag import RAGEngine, SourceChunk
+
+    year = str(args.year).strip()
+    indexer = Indexer()
+
+    try:
+        results = indexer.store.collection.get(
+            where={"year": year},
+            include=["documents", "metadatas"],
+        )
+    except Exception as exc:
+        print(f"Error reading index: {exc}", file=sys.stderr)
+        return 1
+
+    ids = results.get("ids", []) or []
+    documents = results.get("documents", []) or []
+    metadatas = results.get("metadatas", []) or []
+
+    print("=" * 80)
+    print(f"DEBUG PEREDARAN USAHA - TAHUN {year}")
+    print("=" * 80)
+    print(f"Total chunk tahun {year}: {len(documents)}")
+
+    search_terms = [
+        "peredaran usaha",
+        "total peredaran usaha",
+        "67.580.133.333",
+        "67580133333",
+        "1.248.761.500",
+        "1248761500",
+    ]
+
+    matches = []
+
+    for chunk_id, document, metadata in zip(
+        ids,
+        documents,
+        metadatas,
+    ):
+        text = str(document or "")
+        text_lower = text.lower()
+
+        found_terms = [
+            term
+            for term in search_terms
+            if term.lower() in text_lower
+        ]
+
+        if not found_terms:
+            continue
+
+        metadata = metadata or {}
+
+        matches.append(
+            (
+                str(chunk_id or ""),
+                text,
+                metadata,
+                found_terms,
+            )
+        )
+
+    print(f"Chunk cocok diagnostic: {len(matches)}")
+
+    ollama = OllamaClient(base_url=settings.ollama_url)
+    engine = RAGEngine(indexer=indexer, ollama=ollama)
+
+    financial_results = engine._get_financial_document_chunks(year)
+    financial_chunk_ids = {
+        str(result.chunk_id or "")
+        for result in financial_results
+    }
+
+    print(f"Financial chunks terpilih: {len(financial_results)}")
+
+    diagnostic_chunks = [
+        SourceChunk(
+            filename=str(
+                result.metadata.get("filename", "")
+            ),
+            chunk_text=result.content or "",
+            score=float(result.score or 0.0),
+            file_path=str(
+                result.metadata.get("file_path", "")
+            ),
+        )
+        for result in financial_results
+    ]
+
+    extracted = engine._extract_annual_financial_value(
+        diagnostic_chunks,
+        "berapa peredaran usaha tahun " + year,
+    )
+
+    formatted = engine._format_financial_value(extracted)
+
+    print(f"Extractor raw       : {extracted}")
+    print(f"Extractor formatted : {formatted}")
+    print()
+
+    if not matches:
+        print(
+            "Tidak ada chunk yang cocok dengan kata/angka diagnostic."
+        )
+        return 0
+
+    for number, (
+        chunk_id,
+        document,
+        metadata,
+        found_terms,
+    ) in enumerate(matches, start=1):
+
+        filename = str(
+            metadata.get(
+                "filename",
+                metadata.get("file_path", ""),
+            )
+        )
+
+        chunk_index = metadata.get(
+            "chunk_index",
+            metadata.get("chunk_idx", ""),
+        )
+
+        metadata_year = str(
+            metadata.get("year", "")
+        )
+
+        in_financial = (
+            chunk_id in financial_chunk_ids
+        )
+
+        normalized = " ".join(
+            str(document or "").split()
+        )
+
+        print("-" * 80)
+        print(f"MATCH #{number}")
+        print(f"FILE            : {filename}")
+        print(f"CHUNK ID        : {chunk_id}")
+        print(f"CHUNK INDEX     : {chunk_index}")
+        print(f"YEAR            : {metadata_year}")
+        print(f"FINANCIAL SET   : {in_financial}")
+        print(
+            "MATCHED TERMS   : "
+            + ", ".join(found_terms)
+        )
+        print("TEXT:")
+        print(normalized[:1500])
 
     return 0
 
@@ -219,6 +380,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_watch.add_argument("folder", help="Path to the folder to watch")
 
+    # diagnostic Peredaran Usaha
+    p_debug_peredaran = sub.add_parser(
+        "debug-peredaran",
+        help="Inspect indexed Peredaran Usaha chunks for a tax year",
+    )
+    p_debug_peredaran.add_argument(
+        "year",
+        help="Tax year to inspect, e.g. 2024",
+    )
+
     # ask  (RAG)
     p_ask = sub.add_parser("ask", help="Ask a question using RAG (requires Ollama)")
     p_ask.add_argument("question", help="Natural-language question")
@@ -249,6 +420,7 @@ def main(argv: list[str] | None = None) -> int:
         "search": cmd_search,
         "ask": cmd_ask,
         "watch": cmd_watch,
+        "debug-peredaran": cmd_debug_peredaran,
     }
     return dispatch[args.command](args)
 
