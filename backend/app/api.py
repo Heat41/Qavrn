@@ -34,6 +34,22 @@ FRONTEND_DIST = (
 )
 
 
+def _scan_configured_folders(
+        watcher: FileWatcher,
+        folders: list[str],
+) -> None:
+    """Run configured-folder initial scans outside the API startup path."""
+
+    for folder in folders:
+        try:
+            watcher.scan_initial(folder)
+        except Exception:
+            logger.exception(
+                "Background initial scan gagal: %s",
+                folder,
+            )
+
+
 def _warm_runtime(
         indexer: Indexer,
         ollama: OllamaClient,
@@ -119,7 +135,10 @@ async def lifespan(app: FastAPI):
             continue
 
         try:
-            watcher.watch(str(p))
+            watcher.watch(
+                str(p),
+                scan_initial=False,
+            )
 
         except Exception:
             logger.exception(
@@ -141,8 +160,19 @@ async def lifespan(app: FastAPI):
         name="qvarn-model-warmup",
         daemon=True,
     )
+
+    scan_thread = threading.Thread(
+        target=_scan_configured_folders,
+        args=(watcher, list(settings.watched_folders)),
+        name="qvarn-initial-scan",
+        daemon=True,
+    )
+
     warmup_thread.start()
+    scan_thread.start()
+
     app.state.warmup_thread = warmup_thread
+    app.state.scan_thread = scan_thread
 
     logger.info("Qavrn API ready.")
 
@@ -981,6 +1011,7 @@ async def watch_folder(
     await asyncio.to_thread(
         watcher.watch,
         str(folder),
+        False,
     )
 
     return {
