@@ -85,7 +85,7 @@ class TestOllamaWarmup(unittest.TestCase):
         )
         self.assertEqual(
             body["prompt"],
-            "",
+            "Siap.",
         )
         self.assertFalse(body["stream"])
         self.assertEqual(
@@ -95,6 +95,14 @@ class TestOllamaWarmup(unittest.TestCase):
         self.assertEqual(
             body["options"]["num_gpu"],
             0,
+        )
+        self.assertEqual(
+            body["options"]["num_ctx"],
+            2048,
+        )
+        self.assertEqual(
+            body["options"]["num_predict"],
+            1,
         )
 
     def test_generation_body_keeps_model_resident(self) -> None:
