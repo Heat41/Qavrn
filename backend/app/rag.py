@@ -2929,18 +2929,21 @@ class RAGEngine:
 
                 # Laba Bersih | Kolom X: VALUE
                 r"laba\s+bersih"
+                r"(?:\s+tahun\s+20\d{2})?"
                 r"\s*(?:\|\s*)?"
                 r"kolom\s*\d+\s*:\s*"
                 r"([\d][\d.,]*)",
 
                 # Pendapatan Bersih setelah Pajak | Kolom X: VALUE
                 r"pendapatan\s+bersih\s+setelah\s+pajak"
+                r"(?:\s+tahun\s+20\d{2})?"
                 r"\s*(?:\|\s*)?"
                 r"kolom\s*\d+\s*:\s*"
                 r"([\d][\d.,]*)",
 
                 # Pendapatan Bersih | Kolom X: VALUE
                 r"pendapatan\s+bersih"
+                r"(?:\s+tahun\s+20\d{2})?"
                 r"\s*(?:\|\s*)?"
                 r"kolom\s*\d+\s*:\s*"
                 r"([\d][\d.,]*)",
@@ -3091,6 +3094,7 @@ class RAGEngine:
 
                 match = re.search(
                     r"pendapatan\s+kotor"
+                    r"(?:\s+tahun\s+20\d{2})?"
                     r"\s*(?:\|\s*)?"
                     r"kolom\s*\d+\s*:\s*"
                     r"([\d][\d.,]*)",
@@ -3117,12 +3121,14 @@ class RAGEngine:
             patterns = [
 
                 r"pendapatan\s+proyek"
+                r"(?:\s+tahun\s+20\d{2})?"
                 r"\s*(?:\|\s*)?"
                 r"kolom\s*\d+\s*:\s*"
                 r"([\d][\d.,]*)",
 
                 r"pendapatan"
                 r"(?!\s+sebelum)"
+                r"(?:\s+tahun\s+20\d{2})?"
                 r"\s*(?:\|\s*)?"
                 r"kolom\s*\d+\s*:\s*"
                 r"([\d][\d.,]*)",
