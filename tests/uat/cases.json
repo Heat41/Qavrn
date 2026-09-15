@@ -1,0 +1,56 @@
+[
+  {
+    "id": "UAT_01",
+    "name": "Director 2024",
+    "question": "siapa direktur tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": ["RUS'AN"],
+    "require_sources": true
+  },
+  {
+    "id": "UAT_02",
+    "name": "Annual turnover 2024",
+    "question": "berapa peredaran usaha PT Arinsa Energy Pratama tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": ["Rp 1.248.761.500"],
+    "require_sources": true
+  },
+  {
+    "id": "UAT_03",
+    "name": "Company address 2024",
+    "question": "alamat PT Arinsa Energy Pratama tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Jl. Danau Sentarum",
+      "Gg. Citarum No. 3",
+      "Pontianak",
+      "Kalimantan Barat"
+    ],
+    "require_sources": true
+  },
+  {
+    "id": "UAT_04",
+    "name": "Exact file location",
+    "question": "di mana file Neraca dan RL PT AEP 2024.xls",
+    "top_k": 10,
+    "expected_answer_contains": ["Neraca dan RL PT AEP 2024.xls"],
+    "expected_source_filename": "Neraca dan RL PT AEP 2024.xls",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_05",
+    "name": "Strict year rejects unavailable turnover",
+    "question": "berapa peredaran usaha PT Arinsa Energy Pratama tahun 2099",
+    "top_k": 10,
+    "expected_not_found": true,
+    "require_sources": false
+  },
+  {
+    "id": "UAT_06",
+    "name": "Strict year rejects unavailable director",
+    "question": "siapa direktur tahun 2099",
+    "top_k": 10,
+    "expected_not_found": true,
+    "require_sources": false
+  }
+]
