@@ -127,162 +127,22 @@ class RAGEngine:
                 ),
             )
 
-        question_lower = (
-            question.lower().strip()
+        deterministic = self._resolve_deterministic_answer(
+            question,
+            chunks,
         )
 
-        requested_year = (
-            self._extract_year(question)
-        )
-
-
-        # ==============================================================
-        # DETERMINISTIC DIRECTOR
-        # ==============================================================
-
-        director_question = any(
-            phrase in question.lower()
-            for phrase in [
-                "direktur",
-                "nama direktur",
-                "siapa direktur",
-                "pimpinan",
-                "siapa pimpinan",
-            ]
-        )
-
-        if director_question:
-
-            director_name = (
-                self._extract_director_name(
-                    chunks
-                )
-            )
-
-            if director_name:
-
-                answer = (
-                    f"Direktur perusahaan tahun "
-                    f"{requested_year or 'yang ditanyakan'} "
-                    f"adalah {director_name}."
-                )
-
-                return RAGResponse(
-                    answer=answer,
-                    sources=chunks,
-                    model_used="table",
-                    query_time_seconds=(
-                        time.perf_counter() - t0
-                    ),
-                )
-
-
-
-        # ==============================================================
-        # DETERMINISTIC PEREDARAN USAHA WP VS PEMERIKSA
-        # ==============================================================
-
-        if self._is_peredaran_usaha_comparison_question(
-            question_lower
-        ):
-
-            table_answer = (
-                self._extract_wp_pemeriksa_values(
-                    chunks,
-                    "Peredaran Usaha",
-                )
-            )
-
-            if table_answer:
-
-                wp_value, pemeriksa_value = (
-                    table_answer
-                )
-
-                answer = (
-                    "Peredaran Usaha menurut "
-                    f"Wajib Pajak: Rp {wp_value}\n"
-                    "Peredaran Usaha menurut "
-                    f"Pemeriksa: Rp {pemeriksa_value}"
-                )
-
-                return RAGResponse(
-                    answer=answer,
-                    sources=chunks,
-                    model_used="table",
-                    query_time_seconds=(
-                        time.perf_counter() - t0
-                    ),
-                )
-
-            # ----------------------------------------------------------
-            # JANGAN biarkan pertanyaan comparison masuk ke Ollama.
-            # Jika tabel pembanding tidak ditemukan, nyatakan bahwa
-            # data pembanding belum ditemukan.
-            # ----------------------------------------------------------
+        if deterministic is not None:
+            answer, answer_sources, answer_mode = deterministic
 
             return RAGResponse(
-                answer=(
-                    "Data perbandingan Peredaran Usaha "
-                    "menurut Wajib Pajak dan menurut Pemeriksa "
-                    "tidak ditemukan dalam dokumen yang relevan."
-                ),
-                sources=chunks,
-                model_used="search",
+                answer=answer,
+                sources=answer_sources,
+                model_used=answer_mode,
                 query_time_seconds=(
                     time.perf_counter() - t0
                 ),
             )
-
-
-        # ==============================================================
-        # DETERMINISTIC ANNUAL FINANCIAL VALUE
-        #
-        # Untuk pertanyaan finansial tahunan yang memiliki label
-        # eksplisit seperti "Pendapatan Proyek", jangan serahkan
-        # pemilihan angka kepada LLM.
-        # ==============================================================
-
-        if self._is_annual_financial_question(
-                question_lower,
-                requested_year,
-        ):
-
-            financial_value = (
-                self._extract_annual_financial_value(
-                    chunks,
-                    question_lower,
-                )
-            )
-
-            if financial_value:
-
-                normalized_value = (
-                    self._format_financial_value(
-                        financial_value
-                    )
-                )
-
-                financial_label = (
-                    self._get_financial_answer_label(
-                        question_lower
-                    )
-                )
-
-                answer = (
-                    f"{financial_label} tahun "
-                    f"{requested_year} sebesar "
-                    f"{normalized_value}."
-                )
-
-                return RAGResponse(
-                    answer=answer,
-                    sources=chunks,
-                    model_used="table",
-                    query_time_seconds=(
-                        time.perf_counter() - t0
-                    ),
-                )
 
         # ==============================================================
         # MODE AI
@@ -354,18 +214,207 @@ class RAGEngine:
 
             return empty_stream(), chunks
 
-        question_lower = (
-            question.lower().strip()
+        deterministic = self._resolve_deterministic_answer(
+            question,
+            chunks,
         )
 
-        requested_year = (
-            self._extract_year(question)
+        if deterministic is not None:
+            answer, answer_sources, _ = deterministic
+
+            def deterministic_stream() -> Iterator[str]:
+                yield answer
+
+            return deterministic_stream(), answer_sources
+
+        # ==============================================================
+        # MODE AI
+        # ==============================================================
+
+        model = model or settings.ollama_model
+
+        token_iter = self.ollama.generate_stream(
+            question,
+            context=context,
+            model=model,
         )
 
+        return token_iter, chunks
 
-        # ==============================================================
-        # DETERMINISTIC DIRECTOR
-        # ==============================================================
+
+    # ==================================================================
+    # DETERMINISTIC ANSWER
+    # ==================================================================
+
+    def _resolve_deterministic_answer(
+            self,
+            question: str,
+            chunks: List[SourceChunk],
+    ) -> tuple[str, List[SourceChunk], str] | None:
+        """
+        Menyatukan jawaban deterministik yang digunakan oleh query()
+        dan query_stream() agar keduanya tidak memiliki logic ganda.
+        """
+
+        question_lower = question.lower().strip()
+        requested_year = self._extract_year(question)
+
+        # --------------------------------------------------------------
+        # ALAMAT PERUSAHAAN
+        # --------------------------------------------------------------
+
+        if self._is_address_question(question_lower):
+
+            candidates = self._extract_company_address_candidates(
+                question_lower,
+                requested_year,
+            )
+
+            if candidates:
+
+                requested_document_type = self._detect_document_type(
+                    question_lower
+                )
+
+                if requested_document_type:
+                    filtered_candidates = [
+                        candidate
+                        for candidate in candidates
+                        if candidate[1] == requested_document_type
+                    ]
+
+                    if filtered_candidates:
+                        candidates = filtered_candidates
+
+                else:
+                    # Untuk pertanyaan alamat perusahaan umum, gunakan
+                    # sumber identitas yang lebih kuat sebelum faktur/
+                    # invoice yang dapat memuat alamat lawan transaksi.
+                    preferred_types = [
+                        "laporan keuangan",
+                        "SPT",
+                        "dokumen",
+                    ]
+
+                    for preferred_type in preferred_types:
+                        preferred_candidates = [
+                            candidate
+                            for candidate in candidates
+                            if candidate[1] == preferred_type
+                        ]
+
+                        if preferred_candidates:
+                            candidates = preferred_candidates
+                            break
+
+                grouped_candidates: list[
+                    tuple[str, str, SourceChunk, str]
+                ] = []
+
+                for address, document_type, source in candidates:
+                    cleaned_address = self._clean_company_address(
+                        address
+                    )
+                    address_key = self._company_address_key(
+                        cleaned_address
+                    )
+
+                    if not address_key:
+                        continue
+
+                    matched_index = None
+
+                    for index, (
+                        existing_address,
+                        existing_type,
+                        existing_source,
+                        existing_key,
+                    ) in enumerate(grouped_candidates):
+
+                        if self._company_addresses_equivalent(
+                                address_key,
+                                existing_key,
+                        ):
+                            matched_index = index
+
+                            # Simpan versi yang paling lengkap dan bersih.
+                            if self._company_address_quality(
+                                    cleaned_address
+                            ) > self._company_address_quality(
+                                    existing_address
+                            ):
+                                grouped_candidates[index] = (
+                                    cleaned_address,
+                                    document_type,
+                                    source,
+                                    address_key,
+                                )
+
+                            break
+
+                    if matched_index is None:
+                        grouped_candidates.append(
+                            (
+                                cleaned_address,
+                                document_type,
+                                source,
+                                address_key,
+                            )
+                        )
+
+                candidate_values = [
+                    (
+                        address,
+                        document_type,
+                        source,
+                    )
+                    for (
+                        address,
+                        document_type,
+                        source,
+                        _,
+                    ) in grouped_candidates
+                ]
+
+                if len(candidate_values) == 1:
+                    address = candidate_values[0][0]
+
+                    answer = (
+                        f"Alamat perusahaan"
+                        f"{f' tahun {requested_year}' if requested_year else ''}"
+                        f" adalah {address}."
+                    )
+
+                else:
+                    answer_lines = [
+                        (
+                            f"Ditemukan {len(candidate_values)} "
+                            "alamat berbeda"
+                            f"{f' pada tahun {requested_year}' if requested_year else ''}:"
+                        )
+                    ]
+
+                    for address, document_type, _ in candidate_values:
+                        answer_lines.append(
+                            f"- {document_type}: {address}"
+                        )
+
+                    answer_lines.append(
+                        "Silakan tentukan sumber dokumen yang dimaksud."
+                    )
+
+                    answer = "\n".join(answer_lines)
+
+                answer_sources = [
+                    candidate[2]
+                    for candidate in candidate_values
+                ]
+
+                return answer, answer_sources, "table"
+
+        # --------------------------------------------------------------
+        # DIREKTUR
+        # --------------------------------------------------------------
 
         director_question = any(
             phrase in question_lower
@@ -380,10 +429,8 @@ class RAGEngine:
 
         if director_question:
 
-            director_name = (
-                self._extract_director_name(
-                    chunks
-                )
+            director_name = self._extract_director_name(
+                chunks
             )
 
             if director_name:
@@ -391,38 +438,28 @@ class RAGEngine:
                 answer = "Direktur perusahaan"
 
                 if requested_year:
-                    answer += (
-                        f" tahun {requested_year}"
-                    )
+                    answer += f" tahun {requested_year}"
 
-                answer += (
-                    f" adalah {director_name}."
-                )
+                answer += f" adalah {director_name}."
 
-                def director_stream() -> Iterator[str]:
-                    yield answer
+                return answer, chunks, "table"
 
-                return director_stream(), chunks
-
-        # DETERMINISTIC PEREDARAN USAHA WP VS PEMERIKSA
-        # ==============================================================
+        # --------------------------------------------------------------
+        # PEREDARAN USAHA WP VS PEMERIKSA
+        # --------------------------------------------------------------
 
         if self._is_peredaran_usaha_comparison_question(
-            question_lower
+                question_lower
         ):
 
-            table_answer = (
-                self._extract_wp_pemeriksa_values(
-                    chunks,
-                    "Peredaran Usaha",
-                )
+            table_answer = self._extract_wp_pemeriksa_values(
+                chunks,
+                "Peredaran Usaha",
             )
 
             if table_answer:
 
-                wp_value, pemeriksa_value = (
-                    table_answer
-                )
+                wp_value, pemeriksa_value = table_answer
 
                 answer = (
                     "Peredaran Usaha menurut "
@@ -431,43 +468,34 @@ class RAGEngine:
                     f"Pemeriksa: Rp {pemeriksa_value}"
                 )
 
-                def comparison_stream() -> Iterator[str]:
-                    yield answer
+                return answer, chunks, "table"
 
-                return comparison_stream(), chunks
+            return (
+                "Data perbandingan Peredaran Usaha "
+                "menurut Wajib Pajak dan menurut Pemeriksa "
+                "tidak ditemukan dalam dokumen yang relevan.",
+                chunks,
+                "search",
+            )
 
-            def comparison_empty_stream() -> Iterator[str]:
-                yield (
-                    "Data perbandingan Peredaran Usaha "
-                    "menurut Wajib Pajak dan menurut Pemeriksa "
-                    "tidak ditemukan dalam dokumen yang relevan."
-                )
-
-            return comparison_empty_stream(), chunks
-
-        # ==============================================================
-        # DETERMINISTIC ANNUAL FINANCIAL VALUE
-        # ==============================================================
+        # --------------------------------------------------------------
+        # NILAI FINANSIAL TAHUNAN
+        # --------------------------------------------------------------
 
         if self._is_annual_financial_question(
                 question_lower,
                 requested_year,
         ):
 
-            # Untuk deterministic financial extraction,
-            # gunakan seluruh financial chunks pada tahun yang diminta.
             extraction_chunks = chunks
 
             if requested_year:
 
-                financial_results = (
-                    self._get_financial_document_chunks(
-                        requested_year
-                    )
+                financial_results = self._get_financial_document_chunks(
+                    requested_year
                 )
 
                 if financial_results:
-
                     extraction_chunks = [
                         SourceChunk(
                             filename=str(
@@ -492,25 +520,19 @@ class RAGEngine:
                         for result in financial_results
                     ]
 
-            financial_value = (
-                self._extract_annual_financial_value(
-                    extraction_chunks,
-                    question_lower,
-                )
+            financial_value = self._extract_annual_financial_value(
+                extraction_chunks,
+                question_lower,
             )
 
             if financial_value:
 
-                normalized_value = (
-                    self._format_financial_value(
-                        financial_value
-                    )
+                normalized_value = self._format_financial_value(
+                    financial_value
                 )
 
-                financial_label = (
-                    self._get_financial_answer_label(
-                        question_lower
-                    )
+                financial_label = self._get_financial_answer_label(
+                    question_lower
                 )
 
                 answer = (
@@ -519,25 +541,9 @@ class RAGEngine:
                     f"{normalized_value}."
                 )
 
-                def financial_stream() -> Iterator[str]:
-                    yield answer
+                return answer, chunks, "table"
 
-                return financial_stream(), chunks
-
-        # ==============================================================
-        # MODE AI
-        # ==============================================================
-
-        model = model or settings.ollama_model
-
-        token_iter = self.ollama.generate_stream(
-            question,
-            context=context,
-            model=model,
-        )
-
-        return token_iter, chunks
-
+        return None
 
     # ==================================================================
     # DIRECTOR RETRIEVAL
@@ -2383,6 +2389,11 @@ class RAGEngine:
             question.lower().strip()
         )
 
+        # Pertanyaan alamat bukan search-only.
+        # Harus diteruskan ke deterministic address extraction.
+        if RAGEngine._is_address_question(question_lower):
+            return False
+
         location_terms = [
             "dimana",
             "di mana",
@@ -2417,6 +2428,7 @@ class RAGEngine:
             )
         )
 
+
     # ==================================================================
     # BUILD SEARCH ANSWER
     # ==================================================================
@@ -2438,19 +2450,8 @@ class RAGEngine:
             question.lower()
         )
 
-        is_location = any(
-            term in question_lower
-            for term in [
-                "dimana",
-                "di mana",
-                "terletak",
-                "letaknya",
-                "lokasi",
-                "folder",
-                "ada dimana",
-
-                "ada di mana",
-            ]
+        is_location = RAGEngine._is_location_question(
+            question_lower
         )
 
         if is_location:
@@ -2634,6 +2635,19 @@ class RAGEngine:
     def _detect_document_type(
             question_lower: str,
     ) -> str | None:
+
+        if any(
+            phrase in question_lower
+            for phrase in [
+                "laporan keuangan",
+                "lapkeu",
+                "laporan laba rugi",
+                "neraca",
+                "laporan pendapatan",
+            ]
+        ):
+
+            return "financial"
 
         if any(
             phrase in question_lower
@@ -3163,15 +3177,18 @@ class RAGEngine:
                 r"([\d][\d.,]*)",
             ]
 
-            for content in texts:
+            # Prioritaskan pola yang lebih spesifik pada seluruh chunk.
+            # "Total Peredaran Usaha" harus dicari di semua chunk sebelum
+            # fallback ke label "Peredaran Usaha" yang lebih umum.
+            for pattern in patterns:
 
-                normalized = re.sub(
-                    r"\s+",
-                    " ",
-                    content,
-                )
+                for content in texts:
 
-                for pattern in patterns:
+                    normalized = re.sub(
+                        r"\s+",
+                        " ",
+                        content,
+                    )
 
                     match = re.search(
                         pattern,
@@ -3234,15 +3251,19 @@ class RAGEngine:
                 r"peredaran\s+usaha",
             ]
 
-        for content in texts:
+        # Prioritaskan label yang paling spesifik pada seluruh chunk
+        # sebelum mencoba label yang lebih umum. Ini penting untuk kasus
+        # seperti "Total Peredaran Usaha" yang dapat berada pada chunk
+        # setelah baris-baris komponen "Peredaran Usaha".
+        for label_pattern in label_patterns:
 
-            normalized = re.sub(
-                r"\s+",
-                " ",
-                content,
-            )
+            for content in texts:
 
-            for label_pattern in label_patterns:
+                normalized = re.sub(
+                    r"\s+",
+                    " ",
+                    content,
+                )
 
                 match = re.search(
                     label_pattern,
@@ -3717,9 +3738,186 @@ class RAGEngine:
 
         return None
 
+    
     # ==================================================================
-    # LOCATION QUESTION
+    # ALAMAT PERUSAHAAN
     # ==================================================================
+
+    @staticmethod
+    def _clean_company_address(
+            address: str,
+    ) -> str:
+        """Normalize common OCR noise while preserving a readable address."""
+
+        value = re.sub(
+            r"\s+",
+            " ",
+            str(address or ""),
+        ).strip(" ,;|.")
+
+        if not value:
+            return ""
+
+        # OCR sering membaca "Jl." sebagai "Ji.". Normalisasi
+        # seluruh prefix berikut menjadi bentuk tampilan yang sama:
+        # Ji. / Ji / Jl. / Jl / Jalan -> Jl.
+        value = re.sub(
+            r"(?i)^(?:ji|jl|jalan)\.?\s*",
+            "Jl. ",
+            value,
+        )
+
+        # Samakan bentuk Gang/Gg untuk tampilan.
+        value = re.sub(
+            r"(?i)\bgang\.?\s*",
+            "Gg. ",
+            value,
+        )
+        value = re.sub(
+            r"(?i)\bgg\.?\s*",
+            "Gg. ",
+            value,
+        )
+
+        # Rapikan nomor jalan.
+        value = re.sub(
+            r"(?i)\bno\.?\s*",
+            "No. ",
+            value,
+        )
+
+        # Artefak OCR satu huruf di akhir, misalnya "... Barat r".
+        value = re.sub(
+            r"\s+[a-zA-Z]\s*$",
+            "",
+            value,
+        ).strip(" ,;|.")
+
+        value = re.sub(
+            r"\.{2,}",
+            ".",
+            value,
+        )
+        value = re.sub(
+            r",{2,}",
+            ",",
+            value,
+        )
+        value = re.sub(
+            r"\s*,\s*",
+            ", ",
+            value,
+        )
+        value = re.sub(
+            r"\s+",
+            " ",
+            value,
+        )
+
+        return value.strip(" ,;|")
+
+    @staticmethod
+    def _company_address_key(
+            address: str,
+    ) -> str:
+        """Build a punctuation-insensitive key for address deduplication."""
+
+        value = str(address or "").lower()
+
+        value = re.sub(
+            r"\b(?:jalan|jl|ji)\b",
+            "jl",
+            value,
+        )
+        value = re.sub(
+            r"\b(?:gang|gg)\b",
+            "gg",
+            value,
+        )
+        value = re.sub(
+            r"\bnomor\b",
+            "no",
+            value,
+        )
+
+        tokens = re.findall(
+            r"[a-z0-9]+",
+            value,
+        )
+
+        return " ".join(tokens)
+
+    @staticmethod
+    def _company_addresses_equivalent(
+            left_key: str,
+            right_key: str,
+    ) -> bool:
+        """Treat OCR variants and shortened locality suffixes as one address."""
+
+        left = left_key.strip()
+        right = right_key.strip()
+
+        if not left or not right:
+            return False
+
+        if left == right:
+            return True
+
+        shorter, longer = sorted(
+            [left, right],
+            key=len,
+        )
+
+        # Alamat yang sama sering hanya berbeda suffix provinsi/kota
+        # akibat pemotongan OCR pada chunk.
+        if longer.startswith(shorter + " "):
+            return True
+
+        left_tokens = left.split()
+        right_tokens = right.split()
+
+        common = set(left_tokens) & set(right_tokens)
+        base = min(
+            len(set(left_tokens)),
+            len(set(right_tokens)),
+        )
+
+        return (
+            base >= 5
+            and len(common) / base >= 0.90
+        )
+
+    @staticmethod
+    def _company_address_quality(
+            address: str,
+    ) -> tuple[int, int]:
+        """Prefer the most complete readable representation."""
+
+        value = str(address or "")
+        tokens = re.findall(
+            r"[a-zA-Z0-9]+",
+            value,
+        )
+
+        return (
+            len(tokens),
+            len(value),
+        )
+
+    @staticmethod
+    def _is_address_question(question_lower: str) -> bool:
+        address_terms = [
+            "alamat",
+            "alamat perusahaan",
+            "alamat pt",
+            "kantor pt",
+            "kantor perusahaan",
+        ]
+
+        return any(
+            term in question_lower
+            for term in address_terms
+        )
 
     @staticmethod
     def _is_location_question(
@@ -3748,22 +3946,279 @@ class RAGEngine:
     # EXTRACT FILENAME
     # ==================================================================
 
+    def _extract_company_address_candidates(
+        self,
+        question_lower: str,
+        requested_year: str | None = None,
+    ) -> list[tuple[str, str, SourceChunk]]:
+        """
+        Mengambil seluruh kandidat alamat yang relevan.
+
+        Return:
+            list of (address, document_type, source)
+        """
+
+        try:
+            results = self.indexer.store.collection.get(
+                include=["documents", "metadatas"]
+            )
+        except Exception:
+            return []
+
+        documents = (
+            results.get("documents", []) or []
+        )
+        metadatas = (
+            results.get("metadatas", []) or []
+        )
+
+        # ----------------------------------------------------------
+        # OBJECT DARI PERTANYAAN
+        # ----------------------------------------------------------
+
+        entity_match = re.search(
+            r"\b(pt|cv|firma|koperasi|yayasan)\.?\s+"
+            r"([a-z0-9][a-z0-9 .,&'-]{2,})",
+            question_lower,
+            flags=re.IGNORECASE,
+        )
+
+        entity_name = ""
+        entity_terms: list[str] = []
+
+        if entity_match:
+            entity_name = (
+                f"{entity_match.group(1)} "
+                f"{entity_match.group(2)}"
+            ).strip()
+
+            entity_name = re.split(
+                r"\s+(?:tahun|pada|menurut|dalam|di|untuk|yang)\b",
+                entity_name,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip()
+
+            entity_terms = re.findall(
+                r"[a-z0-9]+",
+                entity_name.lower(),
+            )
+
+        candidates = []
+
+        for content, metadata in zip(
+            documents,
+            metadatas,
+        ):
+            content = content or ""
+            metadata = metadata or {}
+
+            content_lower = content.lower()
+            normalized_content = re.sub(
+                r"[^a-z0-9]+",
+                " ",
+                content_lower,
+            )
+
+            # Object harus cocok, tetapi jangan bergantung pada tanda
+            # baca. "PT Arinsa" dan "PT. Arinsa" harus dianggap sama.
+            if entity_terms and not all(
+                term in normalized_content.split()
+                for term in entity_terms
+            ):
+                continue
+
+            if (
+                "alamat" not in content_lower
+                and "alama :" not in content_lower
+            ):
+                continue
+
+            # ------------------------------------------------------
+            # FILTER TAHUN BERDASARKAN METADATA
+            # ------------------------------------------------------
+
+            if requested_year:
+                metadata_year = str(
+                    metadata.get("year", "")
+                ).strip()
+
+                if metadata_year != requested_year:
+                    continue
+
+            # ------------------------------------------------------
+            # JENIS DOKUMEN
+            # ------------------------------------------------------
+
+            filename = str(
+                metadata.get("filename", "")
+            ).strip()
+
+            file_path = str(
+                metadata.get("file_path", "")
+            ).strip()
+
+            file_context = (
+                f"{filename} {file_path}"
+            ).lower()
+
+            document_type = "dokumen"
+
+            if any(
+                term in file_context
+                for term in [
+                    "lapkeu",
+                    "laporan keuangan",
+                    "neraca",
+                    "rugi laba",
+                ]
+            ):
+                document_type = "laporan keuangan"
+
+            elif any(
+                term in file_context
+                for term in [
+                    "faktur",
+                    "faktur pajak",
+                ]
+            ):
+                document_type = "faktur pajak"
+
+            elif "invoice" in file_context:
+                document_type = "invoice"
+
+            elif any(
+                term in file_context
+                for term in [
+                    "spt",
+                    "surat pemberitahuan",
+                ]
+            ):
+                document_type = "SPT"
+
+            # ------------------------------------------------------
+            # EKSTRAKSI ALAMAT
+            # ------------------------------------------------------
+
+            match = re.search(
+                r"alama(?:t)?\s*:\s*(.*?)(?="
+                r"\s+npwp\s*:"
+                r"|\s+nama\s*:"
+                r"|\s+e-?mail\s*:"
+                r"|\s+telp\.?\s*:"
+                r"|\s+telepon\s*:"
+                r"|\s+daftar\s+peredaran\s+usaha\b"
+                r"|\s+baris\s+\d+\s*:"
+                r"|\s+kolom\s+\d+\s*:"
+                r"|\s+\d+\s*\|"
+                r"|$"
+                r")",
+                content,
+                flags=re.IGNORECASE,
+            )
+
+            if not match:
+                continue
+
+            address = match.group(1).strip()
+
+            if not address:
+                continue
+
+            # ------------------------------------------------------
+            # CLEANUP OCR / TABEL
+            # ------------------------------------------------------
+
+            address = re.sub(
+                r"\s+Baris\s+\d+\s*:.*$",
+                "",
+                address,
+                flags=re.IGNORECASE,
+            )
+
+            address = re.sub(
+                r"\s+Kolom\s+\d+\s*:.*$",
+                "",
+                address,
+                flags=re.IGNORECASE,
+            )
+
+            address = re.sub(
+                r"\s+\d+\s*\|.*$",
+                "",
+                address,
+                flags=re.IGNORECASE,
+            )
+
+            address = re.sub(
+                r"\s{2,}",
+                " ",
+                address,
+            ).strip(" ,;|")
+
+            if not address:
+                continue
+
+            source = SourceChunk(
+                filename=filename,
+                chunk_text=content,
+                score=1.0,
+                file_path=file_path,
+            )
+
+            candidates.append(
+                (
+                    address,
+                    document_type,
+                    source,
+                )
+            )
+
+        return candidates
+
+
     @staticmethod
     def _extract_filename(
             question: str,
     ) -> str | None:
 
-        pattern = re.compile(
-            r"([^\s\"'<>]+?\.(?:pdf|docx?|xlsx?|csv|txt|md|html?|json))",
-            re.IGNORECASE,
+        extensions = (
+            r"(?:pdf|docx?|xlsx?|csv|txt|md|html?|json)"
         )
 
-        match = pattern.search(
-            question
+        # Nama file yang disebut setelah kata "file" / "dokumen".
+        # Mendukung nama yang mengandung spasi.
+        match = re.search(
+            rf"\b(?:file|dokumen)\s+[\"']?"
+            rf"(.+?\.{extensions})"
+            rf"[\"']?(?=\s|$)",
+            question,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            return match.group(1).strip(
+                " \t\r\n\"'"
+            )
+
+        # Nama file yang ditulis di dalam tanda kutip.
+        match = re.search(
+            rf"[\"']([^\"']+?\.{extensions})[\"']",
+            question,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            return match.group(1).strip()
+
+        # Fallback untuk nama file tanpa spasi.
+        match = re.search(
+            rf"([^\s\"'<>]+?\.{extensions})",
+            question,
+            flags=re.IGNORECASE,
         )
 
         if not match:
-
             return None
 
         return match.group(1).strip()
