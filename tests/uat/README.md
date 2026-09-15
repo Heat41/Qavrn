@@ -42,3 +42,18 @@ Exit code is `0` only when every selected case passes.
 
 The assertions avoid absolute document paths so the UAT can be reused when
 Qvarn-RAG is moved to the production PC.
+
+
+## Discovery before expanding UAT
+
+Do not copy expected values from unit-test fixtures into real-document UAT.
+First inspect the real local index:
+
+```powershell
+python -m tests.uat.discover_real_document_candidates
+```
+
+The discovery runner prints the production RAG answer, mode, elapsed time and
+source filenames for candidate financial/document-routing questions. Review
+that output before promoting a discovery case into `cases.json` as a locked
+acceptance test.
