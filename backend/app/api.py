@@ -151,6 +151,7 @@ app.add_middleware(
 class AskRequest(BaseModel):
     question: str
     top_k: int = 5
+    model: str | None = None
 
 
 class IndexRequest(BaseModel):
@@ -396,11 +397,19 @@ async def ask(
                 ollama=ollama,
             )
 
-            token_iter, sources = await asyncio.to_thread(
-                rag.query_stream,
-                body.question,
-                body.top_k,
-            )
+            if body.model:
+                token_iter, sources = await asyncio.to_thread(
+                    rag.query_stream,
+                    body.question,
+                    body.top_k,
+                    body.model,
+                )
+            else:
+                token_iter, sources = await asyncio.to_thread(
+                    rag.query_stream,
+                    body.question,
+                    body.top_k,
+                )
 
             def _next(it):
                 return next(it, None)
