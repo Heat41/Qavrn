@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatMessage, IndexedDocument, IndexSummary, Stats } from './types'
+import type {
+  AskStreamEvent,
+  ChatMessage,
+  DocumentMutationResult,
+  IndexedDocument,
+  IndexSummary,
+  Stats,
+} from './types'
+import { createSSEParser } from './lib/sse'
 import { ChatMessageView } from './components/ChatMessage'
 import { SearchBar } from './components/SearchBar'
 import { Sidebar } from './components/Sidebar'
@@ -91,40 +99,37 @@ export default function App() {
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
-      let buffer = ''
+      const parser = createSSEParser()
       let answer = ''
       let sources = placeholder.sources
+
+      const applyEvents = (events: AskStreamEvent[]) => {
+        for (const event of events) {
+          if (event.type === 'token') {
+            answer += event.content
+            setStreaming(prev => prev ? { ...prev, answer } : prev)
+          } else if (event.type === 'sources') {
+            sources = event.sources
+            setStreaming(prev => prev ? { ...prev, sources } : prev)
+          } else if (event.type === 'error') {
+            throw new Error(event.message)
+          }
+        }
+      }
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
+        const parsed = parser.feed(
+          decoder.decode(value, { stream: true }),
+        )
+        applyEvents(parsed.events)
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const raw = line.slice(6).trim()
-          if (raw === '[DONE]') continue
-
-          try {
-            const event = JSON.parse(raw)
-            if (event.type === 'token') {
-              answer += event.content as string
-              setStreaming(prev => prev ? { ...prev, answer } : prev)
-            } else if (event.type === 'sources') {
-              sources = event.sources
-              setStreaming(prev => prev ? { ...prev, sources } : prev)
-            } else if (event.type === 'error') {
-              throw new Error(event.message as string)
-            }
-          } catch (parseErr) {
-            if (parseErr instanceof SyntaxError) continue
-            throw parseErr
-          }
-        }
+        if (parsed.done) break
       }
+
+      applyEvents(parser.flush().events)
 
       const final: ChatMessage = { id, question, answer, sources, isStreaming: false }
       setMessages(prev => [...prev, final])
@@ -172,15 +177,7 @@ export default function App() {
     setScanningDocument(filePath)
 
     try {
-      const result = await fetchJson<{
-        success: boolean
-        file_path: string
-        filename: string
-        indexed: boolean
-        message: string
-        documents: number
-        chunks: number
-      }>('/api/documents/scan', {
+      const result = await fetchJson<DocumentMutationResult>('/api/documents/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_path: filePath }),
@@ -204,15 +201,7 @@ export default function App() {
     setReindexingDocument(filePath)
 
     try {
-      const result = await fetchJson<{
-        success: boolean
-        file_path: string
-        filename: string
-        indexed: boolean
-        message: string
-        documents: number
-        chunks: number
-      }>('/api/documents/reindex', {
+      const result = await fetchJson<DocumentMutationResult>('/api/documents/reindex', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_path: filePath }),
