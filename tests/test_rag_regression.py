@@ -84,7 +84,7 @@ class TestRAGRegression(unittest.TestCase):
         self.assertEqual(raw, "1248761500")
         self.assertEqual(
             RAGEngine._format_financial_value(raw),
-            "1.248.761.500",
+            "Rp 1.248.761.500",
         )
 
     def test_company_address_2024_regression(self) -> None:
@@ -204,8 +204,8 @@ class TestRAGRegression(unittest.TestCase):
         )
 
         self.assertIn(
-            r"C:\\Users\\ASUS260922\\Documents\\PT.AEP\\"
-            r"Laporan Keuangan\\2024",
+            r"C:\Users\ASUS260922\Documents\PT.AEP\"
+            r"Laporan Keuangan\2024",
             answer,
         )
         self.assertNotIn("SPT 2024", answer)
