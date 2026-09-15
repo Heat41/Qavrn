@@ -1,0 +1,120 @@
+[
+  {
+    "id": "UAT_01",
+    "name": "Director 2024",
+    "question": "siapa direktur tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "RUS'AN"
+    ],
+    "require_sources": true
+  },
+  {
+    "id": "UAT_02",
+    "name": "Annual turnover 2024",
+    "question": "berapa peredaran usaha PT Arinsa Energy Pratama tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Rp 1.248.761.500"
+    ],
+    "require_sources": true
+  },
+  {
+    "id": "UAT_03",
+    "name": "Company address 2024",
+    "question": "alamat PT Arinsa Energy Pratama tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Jl. Danau Sentarum",
+      "Gg. Citarum No. 3",
+      "Pontianak",
+      "Kalimantan Barat"
+    ],
+    "require_sources": true
+  },
+  {
+    "id": "UAT_04",
+    "name": "Exact file location",
+    "question": "di mana file Neraca dan RL PT AEP 2024.xls",
+    "top_k": 10,
+    "expected_source_filename": "Neraca dan RL PT AEP 2024.xls",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_05",
+    "name": "Strict year rejects unavailable turnover",
+    "question": "berapa peredaran usaha PT Arinsa Energy Pratama tahun 2099",
+    "top_k": 10,
+    "expected_not_found": true,
+    "require_sources": false
+  },
+  {
+    "id": "UAT_06",
+    "name": "Strict year rejects unavailable director",
+    "question": "siapa direktur tahun 2099",
+    "top_k": 10,
+    "expected_not_found": true,
+    "require_sources": false
+  },
+  {
+    "id": "UAT_07",
+    "name": "Project revenue 2024",
+    "question": "berapa pendapatan proyek tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Rp 1.248.761.500"
+    ],
+    "expected_mode": "table",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_08",
+    "name": "Net revenue 2024",
+    "question": "berapa pendapatan bersih tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Rp 51.093.215,45"
+    ],
+    "expected_mode": "table",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_09",
+    "name": "Net profit 2024",
+    "question": "berapa laba bersih tahun 2024",
+    "top_k": 10,
+    "expected_answer_contains": [
+      "Rp 51.093.215,45"
+    ],
+    "expected_mode": "table",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_10",
+    "name": "SPT document search 2024",
+    "question": "cari spt tahun 2024",
+    "top_k": 10,
+    "expected_mode": "search",
+    "require_sources": true
+  },
+  {
+    "id": "UAT_11",
+    "name": "Faktur document search 2024",
+    "question": "cari faktur pajak tahun 2024",
+    "top_k": 10,
+    "expected_mode": "search",
+    "expected_source_filename_contains_any": [
+      "faktur"
+    ],
+    "require_sources": true
+  },
+  {
+    "id": "UAT_12",
+    "name": "Invoice document search 2024",
+    "question": "cari invoice tahun 2024",
+    "top_k": 10,
+    "expected_mode": "search",
+    "require_sources": false,
+    "expected_not_found": true
+  }
+]

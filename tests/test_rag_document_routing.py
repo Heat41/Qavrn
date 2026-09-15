@@ -175,6 +175,79 @@ class TestRAGDocumentRouting(unittest.TestCase):
             "SPT Masa PPN 2024.pdf",
         )
 
+    def test_document_search_routes_to_category_without_vector_search(self) -> None:
+        collection = FakeCollection(
+            ids=["spt", "bpe", "invoice"],
+            documents=[
+                "masa pajak penyerahan barang dan jasa",
+                "bukti penerimaan elektronik masa pajak",
+                "invoice transaksi",
+            ],
+            metadatas=[
+                {
+                    "year": "2024",
+                    "filename": "SPT Masa PPN 2024.pdf",
+                    "file_path": r"C:\PT.AEP\SPT 2024\SPT Masa PPN 2024.pdf",
+                },
+                {
+                    "year": "2024",
+                    "filename": "BPE_SPT_2024.pdf",
+                    "file_path": r"C:\PT.AEP\SPT 2024\BPE_SPT_2024.pdf",
+                },
+                {
+                    "year": "2024",
+                    "filename": "Invoice 001.pdf",
+                    "file_path": r"C:\PT.AEP\Invoice 001.pdf",
+                },
+            ],
+        )
+        engine = make_engine(collection)
+        engine.indexer.embedder = SimpleNamespace(
+            embed=lambda question: self.fail(
+                "document search must not call embedder"
+            )
+        )
+
+        chunks, _ = engine._retrieve_and_build_context(
+            "cari spt tahun 2024",
+            top_k=10,
+        )
+
+        self.assertEqual(
+            [chunk.filename for chunk in chunks],
+            ["SPT Masa PPN 2024.pdf"],
+        )
+
+    def test_missing_invoice_search_does_not_fallback_to_unrelated_documents(self) -> None:
+        collection = FakeCollection(
+            ids=["spt", "financial"],
+            documents=[
+                "masa pajak penyerahan barang dan jasa",
+                "laporan keuangan perusahaan",
+            ],
+            metadatas=[
+                {
+                    "year": "2024",
+                    "filename": "SPT Masa PPN 2024.pdf",
+                    "file_path": r"C:\PT.AEP\SPT Masa PPN 2024.pdf",
+                },
+                {
+                    "year": "2024",
+                    "filename": "Lapkeu 2024.pdf",
+                    "file_path": r"C:\PT.AEP\Lapkeu 2024.pdf",
+                },
+            ],
+        )
+        engine = make_engine(collection)
+
+        chunks, context = engine._retrieve_and_build_context(
+            "cari invoice tahun 2024",
+            top_k=10,
+        )
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(context, "")
+
     def test_faktur_location_only_returns_faktur(self) -> None:
         collection = FakeCollection(
             ids=["faktur", "invoice"],

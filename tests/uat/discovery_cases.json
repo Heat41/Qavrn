@@ -1,0 +1,44 @@
+[
+  {
+    "id": "DISC_01",
+    "name": "Project revenue 2024",
+    "question": "berapa pendapatan proyek tahun 2024",
+    "top_k": 10
+  },
+  {
+    "id": "DISC_02",
+    "name": "Net revenue 2024",
+    "question": "berapa pendapatan bersih tahun 2024",
+    "top_k": 10
+  },
+  {
+    "id": "DISC_03",
+    "name": "Net profit 2024",
+    "question": "berapa laba bersih tahun 2024",
+    "top_k": 10
+  },
+  {
+    "id": "DISC_04",
+    "name": "Turnover WP vs Pemeriksa 2024",
+    "question": "berapa peredaran usaha menurut WP dan menurut Pemeriksa tahun 2024",
+    "top_k": 10
+  },
+  {
+    "id": "DISC_05",
+    "name": "SPT documents 2024",
+    "question": "cari spt tahun 2024",
+    "top_k": 10
+  },
+  {
+    "id": "DISC_06",
+    "name": "Faktur documents 2024",
+    "question": "cari faktur pajak tahun 2024",
+    "top_k": 10
+  },
+  {
+    "id": "DISC_07",
+    "name": "Invoice documents 2024",
+    "question": "cari invoice tahun 2024",
+    "top_k": 10
+  }
+]

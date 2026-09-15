@@ -929,6 +929,12 @@ class RAGEngine:
             )
         )
 
+        document_search_question = (
+            self._is_document_search_question(
+                question_lower
+            )
+        )
+
         numeric_or_table_question = (
             self._is_numeric_or_table_question(
                 question_lower
@@ -998,7 +1004,41 @@ class RAGEngine:
 
 
         # ==============================================================
-        # 3A. RETRIEVAL KHUSUS DIREKTUR
+        # 3A. PENCARIAN DOKUMEN BERDASARKAN KATEGORI
+        #
+        # Query seperti "cari spt/faktur/invoice tahun 2024"
+        # harus menggunakan metadata langsung, tanpa embedding/Ollama.
+        # ==============================================================
+
+        if document_search_question:
+
+            search_category = (
+                self._detect_location_category(
+                    question_lower
+                )
+            )
+
+            document_results = (
+                self._find_location_documents(
+                    requested_year,
+                    search_category,
+                )
+            )
+
+            if document_results:
+
+                return self._build_location_context(
+                    document_results,
+                    top_k=len(
+                        document_results
+                    ),
+                )
+
+            return [], ""
+
+
+        # ==============================================================
+        # 3B. RETRIEVAL KHUSUS DIREKTUR
         # ==============================================================
         if director_question:
 
@@ -2377,6 +2417,55 @@ class RAGEngine:
         return match.group(1)
 
     # ==================================================================
+    # DOCUMENT SEARCH INTENT
+    # ==================================================================
+
+    @staticmethod
+    def _is_document_search_question(
+            question_lower: str,
+    ) -> bool:
+
+        question_lower = (
+            question_lower.lower().strip()
+        )
+
+        search_verbs = [
+            "cari",
+            "carikan",
+            "temukan",
+            "tampilkan",
+        ]
+
+        document_terms = [
+            "spt",
+            "surat pemberitahuan",
+            "faktur",
+            "faktur pajak",
+            "invoice",
+            "laporan keuangan",
+            "lapkeu",
+            "neraca",
+        ]
+
+        has_search_verb = any(
+            re.search(
+                rf"\b{re.escape(verb)}\b",
+                question_lower,
+            )
+            for verb in search_verbs
+        )
+
+        has_document_term = any(
+            term in question_lower
+            for term in document_terms
+        )
+
+        return (
+            has_search_verb
+            and has_document_term
+        )
+
+    # ==================================================================
     # SEARCH ONLY
     # ==================================================================
 
@@ -2425,6 +2514,10 @@ class RAGEngine:
             any(
                 term in question_lower
                 for term in file_search_terms
+            )
+            or
+            RAGEngine._is_document_search_question(
+                question_lower
             )
         )
 
