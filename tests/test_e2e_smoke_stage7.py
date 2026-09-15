@@ -240,8 +240,8 @@ class TestE2ESmokeStage7(unittest.TestCase):
             1.0,
             "Neraca dan RL PT AEP 2024.xls",
             (
-                r"C:\Users\ASUS260922\Documents\PT.AEP\"
-                r"Laporan Keuangan\2024\Neraca dan RL PT AEP 2024.xls"
+                "C:\\Users\\ASUS260922\\Documents\\PT.AEP\\"
+                "Laporan Keuangan\\2024\\Neraca dan RL PT AEP 2024.xls"
             ),
         )
         indexer = FakeIndexer([target])
