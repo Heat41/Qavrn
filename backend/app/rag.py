@@ -3387,15 +3387,18 @@ class RAGEngine:
                 r"([\d][\d.,]*)",
             ]
 
-            for content in texts:
+            # Prioritaskan pola yang lebih spesifik pada seluruh chunk.
+            # "Total Peredaran Usaha" harus dicari di semua chunk sebelum
+            # fallback ke label "Peredaran Usaha" yang lebih umum.
+            for pattern in patterns:
 
-                normalized = re.sub(
-                    r"\s+",
-                    " ",
-                    content,
-                )
+                for content in texts:
 
-                for pattern in patterns:
+                    normalized = re.sub(
+                        r"\s+",
+                        " ",
+                        content,
+                    )
 
                     match = re.search(
                         pattern,
