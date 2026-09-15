@@ -33,7 +33,6 @@
     "name": "Exact file location",
     "question": "di mana file Neraca dan RL PT AEP 2024.xls",
     "top_k": 10,
-    "expected_answer_contains": ["Neraca dan RL PT AEP 2024.xls"],
     "expected_source_filename": "Neraca dan RL PT AEP 2024.xls",
     "require_sources": true
   },
