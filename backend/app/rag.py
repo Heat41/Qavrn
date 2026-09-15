@@ -307,25 +307,74 @@ class RAGEngine:
                             candidates = preferred_candidates
                             break
 
-                unique_candidates = {}
+                grouped_candidates: list[
+                    tuple[str, str, SourceChunk, str]
+                ] = []
 
                 for address, document_type, source in candidates:
-                    normalized_address = re.sub(
-                        r"\s+",
-                        " ",
-                        address.lower(),
-                    ).strip(" ,.")
+                    cleaned_address = self._clean_company_address(
+                        address
+                    )
+                    address_key = self._company_address_key(
+                        cleaned_address
+                    )
 
-                    if normalized_address not in unique_candidates:
-                        unique_candidates[normalized_address] = (
-                            address,
-                            document_type,
-                            source,
+                    if not address_key:
+                        continue
+
+                    matched_index = None
+
+                    for index, (
+                        existing_address,
+                        existing_type,
+                        existing_source,
+                        existing_key,
+                    ) in enumerate(grouped_candidates):
+
+                        if self._company_addresses_equivalent(
+                                address_key,
+                                existing_key,
+                        ):
+                            matched_index = index
+
+                            # Simpan versi yang paling lengkap dan bersih.
+                            if self._company_address_quality(
+                                    cleaned_address
+                            ) > self._company_address_quality(
+                                    existing_address
+                            ):
+                                grouped_candidates[index] = (
+                                    cleaned_address,
+                                    document_type,
+                                    source,
+                                    address_key,
+                                )
+
+                            break
+
+                    if matched_index is None:
+                        grouped_candidates.append(
+                            (
+                                cleaned_address,
+                                document_type,
+                                source,
+                                address_key,
+                            )
                         )
 
-                candidate_values = list(
-                    unique_candidates.values()
-                )
+                candidate_values = [
+                    (
+                        address,
+                        document_type,
+                        source,
+                    )
+                    for (
+                        address,
+                        document_type,
+                        source,
+                        _,
+                    ) in grouped_candidates
+                ]
 
                 if len(candidate_values) == 1:
                     address = candidate_values[0][0]
@@ -3693,6 +3742,155 @@ class RAGEngine:
     # ==================================================================
     # ALAMAT PERUSAHAAN
     # ==================================================================
+
+    @staticmethod
+    def _clean_company_address(
+            address: str,
+    ) -> str:
+        """Normalize common OCR noise while preserving a readable address."""
+
+        value = re.sub(
+            r"\s+",
+            " ",
+            str(address or ""),
+        ).strip(" ,;|.")
+
+        if not value:
+            return ""
+
+        # OCR sering membaca "Jl." sebagai "Ji.".
+        value = re.sub(
+            r"(?i)^ji\.?\b",
+            "Jl.",
+            value,
+        )
+
+        # Samakan bentuk Gang/Gg untuk tampilan.
+        value = re.sub(
+            r"(?i)\bgang\.?\s*",
+            "Gg. ",
+            value,
+        )
+        value = re.sub(
+            r"(?i)\bgg\.?\s*",
+            "Gg. ",
+            value,
+        )
+
+        # Rapikan nomor jalan.
+        value = re.sub(
+            r"(?i)\bno\.?\s*",
+            "No. ",
+            value,
+        )
+
+        # Artefak OCR satu huruf di akhir, misalnya "... Barat r".
+        value = re.sub(
+            r"\s+[a-zA-Z]\s*$",
+            "",
+            value,
+        ).strip(" ,;|.")
+
+        value = re.sub(
+            r"\s*,\s*",
+            ", ",
+            value,
+        )
+        value = re.sub(
+            r"\s+",
+            " ",
+            value,
+        )
+
+        return value
+
+    @staticmethod
+    def _company_address_key(
+            address: str,
+    ) -> str:
+        """Build a punctuation-insensitive key for address deduplication."""
+
+        value = str(address or "").lower()
+
+        value = re.sub(
+            r"\b(?:jalan|jl|ji)\b",
+            "jl",
+            value,
+        )
+        value = re.sub(
+            r"\b(?:gang|gg)\b",
+            "gg",
+            value,
+        )
+        value = re.sub(
+            r"\bnomor\b",
+            "no",
+            value,
+        )
+
+        tokens = re.findall(
+            r"[a-z0-9]+",
+            value,
+        )
+
+        return " ".join(tokens)
+
+    @staticmethod
+    def _company_addresses_equivalent(
+            left_key: str,
+            right_key: str,
+    ) -> bool:
+        """Treat OCR variants and shortened locality suffixes as one address."""
+
+        left = left_key.strip()
+        right = right_key.strip()
+
+        if not left or not right:
+            return False
+
+        if left == right:
+            return True
+
+        shorter, longer = sorted(
+            [left, right],
+            key=len,
+        )
+
+        # Alamat yang sama sering hanya berbeda suffix provinsi/kota
+        # akibat pemotongan OCR pada chunk.
+        if longer.startswith(shorter + " "):
+            return True
+
+        left_tokens = left.split()
+        right_tokens = right.split()
+
+        common = set(left_tokens) & set(right_tokens)
+        base = min(
+            len(set(left_tokens)),
+            len(set(right_tokens)),
+        )
+
+        return (
+            base >= 5
+            and len(common) / base >= 0.90
+        )
+
+    @staticmethod
+    def _company_address_quality(
+            address: str,
+    ) -> tuple[int, int]:
+        """Prefer the most complete readable representation."""
+
+        value = str(address or "")
+        tokens = re.findall(
+            r"[a-zA-Z0-9]+",
+            value,
+        )
+
+        return (
+            len(tokens),
+            len(value),
+        )
 
     @staticmethod
     def _is_address_question(question_lower: str) -> bool:
