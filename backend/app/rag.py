@@ -296,7 +296,7 @@ class RAGEngine:
 
                 return (
                     "Peredaran Usaha menurut "
-                    f"Wajib Pajak: Rp {wp_value}\\n"
+                    f"Wajib Pajak: Rp {wp_value}\n"
                     "Peredaran Usaha menurut "
                     f"Pemeriksa: Rp {pemeriksa_value}",
                     "table",
